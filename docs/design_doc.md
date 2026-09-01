@@ -122,25 +122,23 @@ Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per 
 
 ### NFR4: Stateless, horizontally scalable service
 
-### NFR5: Geolocation service failure resilience in place
+### NFR5: Geolocation service failure resilience
 
 ### NFR6: Distinguishable denial reasons
 
 ### NFR7: SQL-injection-safe input handling
 
-### NFR8: Rate-limited coupon creation to prevent spam creation of junk coupons and brute-force guessing
-
-### NFR9: Logging for traceability and troubleshooting purposes
-
 ---
 
 ### Recommendations (beyond this task's required scope)
 
-- **Authorization on coupon creation** — the task explicitly states authentication is not required for creating coupons, so this isn't built. In a real production system, restricting coupon creation to authorized callers (JWT / Azure token) would be the recommended follow-up, since an unauthenticated create endpoint is otherwise open to anyone. Noted here rather than implemented, to respect the task's explicit scope.
-- **Latency/throughput target** — not defined here. Committing to a number (e.g. p95 latency for the redeem endpoint) without real load-test data would be false precision. Add a measurable target once load testing/benchmarking exists.
-- **Health checks for orchestration** — liveness/readiness endpoints so the load balancer/orchestrator (K8s) only routes traffic to instances actually able to serve requests, and can restart instances that are stuck (readiness tied to real dependencies like DB connectivity, not just "process is running"). Standard production practice, not something this task's grading targets directly.
-- **Static analysis and dependency/security scanning** — covered in section 4.3, alongside the rest of the test strategy.
-- **Load/performance and chaos testing** — covered in sections 4.4 and 4.5.
+- **NFR8: Rate-limited public endpoints** — On UC1, rate limiting prevents a single caller from flooding the database with junk coupons. On UC2 (redeem), it would prevent a single caller from brute-forcing valid codes and exhausting the geolocation provider's daily request quota.
+- **NFR9: Logging for traceability and troubleshooting purposes** — every attempt to use a coupon needs to be traceable end-to-end, not just the successful `coupon_usage` records, so incidents and abnormal patterns can be diagnosed after the fact.
+- **NFR10: Authorization on coupon creation** — In a real production system, restricting coupon creation to authorized callers (JWT / Azure token) would be the recommended follow-up, since an unauthenticated create endpoint is otherwise open to anyone.
+- **NFR11: Latency/throughput target** — Committing to a number (e.g. p95 latency for the redeem endpoint) without real load-test data would be false precision. Add a measurable target once load testing/benchmarking exists.
+- **NFR12: Health checks for orchestration** — Liveness/readiness endpoints so the load balancer/orchestrator (K8s) only routes traffic to instances actually able to serve requests, and can restart instances that are stuck (readiness tied to real dependencies like DB connectivity, not just "process is running").
+- **NFR13: Static analysis and dependency/security scanning** — Automated checks on the code and its dependencies (code smells, test coverage, known CVEs, secrets, container image vulnerabilities) that run without executing the service, catching issues no functional test would.
+- **NFR14: Load/performance and chaos testing** — Verifying the service holds up under realistic concurrent traffic and real infrastructure failures (multi-instance, real network faults), not just the synthetic thread counts and mocked failures used elsewhere in this document.
 
 ---
 
@@ -174,7 +172,7 @@ Reference for section 3 — the window between checking a state and writing base
 
 ### ADR-2: Client IP extraction behind a load balancer
 
-**Context:** the service needs a user's real IP address to check their country, even though NFR4 puts a load balancer in front of every request.
+**Context:** the service needs a user's real IP address to check their country, even though NFR4 puts a load balancer in front of every request. NFR4's underlying topology — N stateless instances behind a load balancer, no shared instance memory, all state in the database — is a given constraint from the task's scalability requirement, not a decision made here; this and ADR-5/ADR-10 all build on it.
 
 **References:** UC2, NFR4
 
@@ -317,6 +315,19 @@ Per-request cost is negligible — a single indexed UPSERT on the primary key, t
 
 **Scope note:** this ADR only covers UC1 (coupon creation), since that's the endpoint NFR8 and the task scope name. In a real production system, rate limiting would normally apply to every public endpoint, including UC2 (Use a coupon) — it's also unauthenticated. The same mechanism extends directly: reuse the atomic-UPSERT pattern, key it by IP + endpoint instead of IP alone, and UC2 already has the caller's IP available (step 2, for geolocation), so no new IP-extraction work is needed.
 
+### ADR-11: Usage-attempt logging mechanism
+
+**Context:** NFR9 requires every UC2 attempt — success and every denial — to be logged with context (code, user_id, outcome, reason), so support can resolve a complaint without reproducing it. `coupon_usage` only persists successful attempts; every denial variant (B-F) is rolled back or never reaches an insert, so it can't satisfy this alone.
+
+**References:** UC2, NFR9
+
+**Alternatives considered:**
+1. Rely on `coupon_usage` for traceability. Rejected — covers only successes, no record of any denial.
+2. A dedicated audit table (e.g. `coupon_usage_attempt`) recording every outcome, including denials. Queryable, but a second table to keep consistent alongside the concurrency-critical write path, for no clear benefit over log search.
+3. **Structured application logs (SLF4J/Logback) at each UC2 branch — chosen, see Decision.**
+
+**Decision:** option 3 — one structured log line per UC2 outcome (code, user_id, IP, outcome, reason), emitted at each Variant A-F branch, independent of the DB write. Cheapest option that covers every branch including rolled-back ones, and matches how support actually looks up a specific request (by code/user_id via log search), rather than querying a table where denied attempts leave no row.
+
 ---
 
 ## 4. Test Strategy
@@ -359,6 +370,10 @@ Real database (Testcontainers). N+1 simultaneous `POST /coupons` requests from t
 
 Full HTTP round-trip through the running application, single process. `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests for the two golden paths (create then redeem). Not exhaustive variant coverage — that's 4.1.2. *JUnit 5 + Testcontainers + WireMock.*
 
+#### 4.1.8: Usage-attempt logging test (NFR9, ADR-11)
+
+Testcontainers Postgres + WireMock, one test per UC2 variant (A-F). A Logback test appender captures log output; assert each variant emits exactly one structured line with the expected code, user_id, outcome, and reason — including the rolled-back paths (Variant F) where no DB row exists to check instead. *JUnit 5 + Testcontainers + WireMock.*
+
 ### 4.2. Tool-based tests
 
 The same coverage as 4.1, regrouped by which tool/infrastructure runs it — reflects how the test code is physically organized in the repo (separate test source sets), not the risk-coverage story 4.1 tells. The last two rows aren't separate numbered tests of their own — they're the additional approaches already noted inline in 4.1.1 and 4.1.4, grouped here by their own distinct tooling.
@@ -366,7 +381,7 @@ The same coverage as 4.1, regrouped by which tool/infrastructure runs it — ref
 - **JUnit 5 + Mockito** (no external infra) — 4.1.1 Unit tests
 - **JUnit 5 + Testcontainers (Postgres)** — 4.1.2 Integration tests, 4.1.3 Concurrency tests, 4.1.5 Idempotency-under-concurrency test, 4.1.6 Rate-limiting test
 - **JUnit 5 + WireMock** — 4.1.4 Geolocation adapter tests
-- **JUnit 5 + Testcontainers + WireMock** — 4.1.7 E2E/smoke layer
+- **JUnit 5 + Testcontainers + WireMock** — 4.1.7 E2E/smoke layer, 4.1.8 Usage-attempt logging test
 - **jqwik + PIT** (additional approach, layered onto 4.1.1's existing suite) — property-based and mutation testing
 - **Pact** (additional approach, layered onto 4.1.4's boundary) — contract testing
 
