@@ -114,41 +114,23 @@ Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per 
 
 ## 2. Non-Functional Requirements
 
-### NFR1: Exact usage limit under concurrency
+### NFR1: `current_uses` will never exceed `max_uses`, regardless of concurrency. Exactly `max_uses` requests will succeed; the rest get a limit error.
 
-Even with N concurrent requests for the same coupon (regardless of how many service instances handle them), `current_uses` will never exceed `max_uses`. Exactly `max_uses` requests will succeed; the rest get a limit error.
+### NFR2: One use of a coupon per user, regardless of concurrency and retries.
 
-### NFR2: One use per user under concurrency
-
-If the same user sends N concurrent requests for the same coupon (double-click, retry), only one will succeed — the rest get an "already used" error, with no double usage.
-
-### NFR3: Database-enforced code uniqueness
-
-Two concurrent attempts to create a coupon with the same code (including a case difference) — one succeeds, the other gets a conflict error. Checking "does the code already exist" in application code before saving is not enough (TOCTOU).
+### NFR3: Database-enforced code uniqueness including case difference
 
 ### NFR4: Stateless, horizontally scalable service
 
-The service works correctly across N parallel instances behind a load balancer, with no memory shared between them. All state (counters, usage history) lives in the database, not in application memory — otherwise NFR1 (exact usage limit under concurrency) / NFR2 (one use per user under concurrency) break down under horizontal scaling.
-
-### NFR5: Geolocation service failure resilience
-
-The external geolocation API is a dependency outside our control (limits, outages). A request must not wait indefinitely when the service isn't responding — an explicit timeout, a bounded number of retries with exponential backoff, and fail-closed behavior are needed (deny by default, since country matching is a hard business requirement from the task), rather than fail-open.
+### NFR5: Geolocation service failure resilience in place
 
 ### NFR6: Distinguishable denial reasons
 
-The four denial cases from the task (limit / code doesn't exist / wrong country / already used) must be distinguishable on the client side — different error codes, not one generic "400 Bad Request".
+### NFR7: SQL-injection-safe input handling
 
-### NFR7: Logged usage attempts
+### NFR8: Rate-limited coupon creation to prevent spam creation of junk coupons and brute-force guessing
 
-Every attempt to use a coupon — success and every type of denial — must be logged with context (code, user_id, outcome, reason). Support must be able to resolve a complaint ("my code didn't work") without asking the customer to reproduce the request.
-
-### NFR8: SQL-injection-safe input handling
-
-No data from the request (coupon code, user_id) reaches SQL queries via string concatenation — only via parameterized queries/ORM. The coupon code is additionally restricted to a safe character set (letters, digits, `-`, `_`).
-
-### NFR9: Rate-limited coupon creation
-
-Coupon creation (UC1 — Create a coupon) requires no authentication, so it must be rate-limited (e.g. per IP) to prevent spam creation of junk coupons and brute-force guessing of valid codes. Without this, anyone can flood the database with coupons.
+### NFR9: Logging for traceability and troubleshooting purposes
 
 ---
 
@@ -213,7 +195,7 @@ Reference for section 3 — the window between checking a state and writing base
 1. Call a specific provider's SDK directly from inside the UC2 redeem logic. Fastest to write, but ties business logic to one vendor's shapes and makes the redeem flow hard to unit-test (every test would need a real or fully-mocked HTTP call baked into the business code).
 2. **Define a small `GeoLocationService` interface — chosen, see Decision** (e.g. "given an IP, return a country or a failure") with one HTTP-based implementation behind it, wired in via dependency injection.
 
-**Decision:** option 2 — a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (which one is decided in ADR-4), with an explicit timeout and a small, bounded number of retries using exponential backoff. The retry/backoff is implemented declaratively via Spring Retry's `@Retryable`/`@Backoff` annotations rather than a hand-rolled retry loop — a pattern already proven in production for exactly this kind of external-call resilience. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
+**Decision:** option 2 — an explicit timeout, a bounded number of retries with exponential backoff, and fail-closed behavior (NFR5), via a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (which one is decided in ADR-4). The retry/backoff is implemented declaratively via Spring Retry's `@Retryable`/`@Backoff` annotations rather than a hand-rolled retry loop — a pattern already proven in production for exactly this kind of external-call resilience. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
 
 ### ADR-4: Geolocation provider choice
 
@@ -301,9 +283,9 @@ The insert runs first, so a repeat request from a user who already redeemed fail
 
 ### ADR-10: Rate limiting mechanism for coupon creation
 
-**Context:** UC1 (Create a coupon) requires no authentication (NFR9), so it needs a limit on requests per IP, without breaking NFR4 (stateless service, N instances behind a load balancer).
+**Context:** UC1 (Create a coupon) requires no authentication (NFR8), so it needs a limit on requests per IP, without breaking NFR4 (stateless service, N instances behind a load balancer).
 
-**References:** UC1, NFR9
+**References:** UC1, NFR8
 
 **Alternatives considered:**
 1. In-memory counter (e.g. Bucket4j with a local bucket). Rejected outright — a counter in one instance's memory doesn't stop requests landing on a different instance.
@@ -333,6 +315,8 @@ This is the simplest option that works within the stack already chosen elsewhere
 
 Per-request cost is negligible — a single indexed UPSERT on the primary key, the same cost class as the atomic `UPDATE` ADR-5 already uses on UC2's hotter redeem path. The actual concern is table growth, not per-request latency: one row is kept per distinct IP forever, since nothing ever deletes old rows. A scheduled cleanup job (e.g. Spring `@Scheduled`, hourly) deleting rows where `window_start` is older than the window size keeps the table bounded, without affecting the correctness of the rate limit itself.
 
+**Scope note:** this ADR only covers UC1 (coupon creation), since that's the endpoint NFR8 and the task scope name. In a real production system, rate limiting would normally apply to every public endpoint, including UC2 (Use a coupon) — it's also unauthenticated. The same mechanism extends directly: reuse the atomic-UPSERT pattern, key it by IP + endpoint instead of IP alone, and UC2 already has the caller's IP available (step 2, for geolocation), so no new IP-extraction work is needed.
+
 ---
 
 ## 4. Test Strategy
@@ -345,7 +329,7 @@ Organized by test scope. Concurrency, geolocation adapter, idempotency-under-con
 
 #### 4.1.1: Unit tests
 
-Pure business logic, `GeoLocationService` and repositories mocked; no Spring context. Covers: input validation and character-set restriction (UC1 Variant B, NFR8 — also the SQL-injection defense for the coupon code), code normalization (ADR-7), idempotency comparison logic (UC1 Variant C vs D), client-IP trust-boundary parsing (ADR-2), and HTTP error-model consistency across all 8 error codes from ADR-9 (NFR6, via a `@WebMvcTest` slice), including `RATE_LIMITED`'s response shape — its trigger condition is covered separately in 4.1.6. *JUnit 5 + Mockito.*
+Pure business logic, `GeoLocationService` and repositories mocked; no Spring context. Covers: input validation and character-set restriction (UC1 Variant B, NFR7 — also the SQL-injection defense for the coupon code), code normalization (ADR-7), idempotency comparison logic (UC1 Variant C vs D), client-IP trust-boundary parsing (ADR-2), and HTTP error-model consistency across all 8 error codes from ADR-9 (NFR6, via a `@WebMvcTest` slice), including `RATE_LIMITED`'s response shape — its trigger condition is covered separately in 4.1.6. *JUnit 5 + Mockito.*
 
 **Additional approach:** property-based testing (jqwik) generates randomized inputs against the validation logic; mutation testing (PIT) breaks the production code to check the suite catches it. Both audit existing coverage rather than add new cases.
 
@@ -367,7 +351,7 @@ WireMock, isolated from business logic. Covers: success, timeout → retry per A
 
 Two simultaneous identical `POST /coupons` requests with the same code — one gets `201`, the other gets Variant D's `200`, not a race-corrupted result. *JUnit 5 + Testcontainers.*
 
-#### 4.1.6: Rate-limiting test (NFR9, ADR-10)
+#### 4.1.6: Rate-limiting test (NFR8, ADR-10)
 
 Real database (Testcontainers). N+1 simultaneous `POST /coupons` requests from the same IP where N is the configured per-minute limit — assert exactly N succeed (`201`/`200`) and the rest get `429 RATE_LIMITED`. Separate test: advance past the window (or use a short test-only window) and confirm the counter resets. *JUnit 5 + Testcontainers.*
 
