@@ -159,6 +159,8 @@ Coupon creation (UC1 — Create a coupon) requires no authentication, so it must
 - **Authorization on coupon creation** — the task explicitly states authentication is not required for creating coupons, so this isn't built. In a real production system, restricting coupon creation to authorized callers (JWT / Azure token) would be the recommended follow-up, since an unauthenticated create endpoint is otherwise open to anyone. Noted here rather than implemented, to respect the task's explicit scope.
 - **Latency/throughput target** — not defined here. Committing to a number (e.g. p95 latency for the redeem endpoint) without real load-test data would be false precision. Add a measurable target once load testing/benchmarking exists.
 - **Health checks for orchestration** — liveness/readiness endpoints so the load balancer/orchestrator (K8s) only routes traffic to instances actually able to serve requests, and can restart instances that are stuck (readiness tied to real dependencies like DB connectivity, not just "process is running"). Standard production practice, not something this task's grading targets directly.
+- **Static analysis and dependency/security scanning** — covered in section 4.3, alongside the rest of the test strategy.
+- **Load/performance and chaos testing** — covered in sections 4.4 and 4.5.
 
 ---
 
@@ -297,13 +299,110 @@ The insert runs first, so a repeat request from a user who already redeemed fail
 2. **Status code plus a stable, machine-readable error code — chosen, see Decision** in the response body (e.g. `{"error": "LIMIT_REACHED"}`), alongside a human-readable message.
 3. A human-readable message only, no machine-readable code. Bad for any automated client — wording can change and silently break anything parsing the message text.
 
-**Decision:** option 2. Every error response carries both the HTTP status already assigned per variant across UC1/UC2 (`400`, `403`, `404`, `409`, `503`) and the exact error-code strings already used throughout this document (`INVALID_REQUEST`, `CODE_ALREADY_EXISTS`, `COUPON_NOT_FOUND`, `GEO_UNAVAILABLE`, `COUNTRY_NOT_ALLOWED`, `ALREADY_USED`, `LIMIT_REACHED`) — no new names are introduced here, this ADR just formalizes the shape of the response body around names the use cases already fixed. It's the only option that lets a program reliably tell two different failures apart even when they share the same status code, without depending on message text that could change.
+**Decision:** option 2. Every error response carries both the HTTP status already assigned per variant across UC1/UC2 (`400`, `403`, `404`, `409`, `429`, `503`) and the exact error-code strings already used throughout this document (`INVALID_REQUEST`, `CODE_ALREADY_EXISTS`, `COUPON_NOT_FOUND`, `GEO_UNAVAILABLE`, `COUNTRY_NOT_ALLOWED`, `ALREADY_USED`, `LIMIT_REACHED`, `RATE_LIMITED`) — no new names are introduced here, this ADR just formalizes the shape of the response body around names the use cases already fixed. It's the only option that lets a program reliably tell two different failures apart even when they share the same status code, without depending on message text that could change.
+
+### ADR-10: Rate limiting mechanism for coupon creation
+
+**Context:** UC1 (Create a coupon) requires no authentication (NFR9), so it needs a limit on requests per IP, without breaking NFR4 (stateless service, N instances behind a load balancer).
+
+**References:** UC1, NFR9
+
+**Alternatives considered:**
+1. In-memory counter (e.g. Bucket4j with a local bucket). Rejected outright — a counter in one instance's memory doesn't stop requests landing on a different instance.
+2. Distributed lock/counter via Redis. Rejected outright — a new infrastructure dependency for something the database can already do natively.
+3. **Counter row in Postgres, updated with a single atomic UPSERT — chosen, see Decision.** Reuses the atomic-conditional-write pattern already established in ADR-5/Toolbox #1 — no lock, no TOCTOU window, and the state lives in the shared database, so it's correct across every instance (satisfies NFR4).
+
+**Decision:** option 3 — a `creation_rate_limit(ip_address INET PRIMARY KEY, window_start TIMESTAMPTZ, request_count INTEGER)` table, fixed-window algorithm (a configurable limit, e.g. 10 requests/minute per IP). Every UC1 request issues one atomic upsert before the coupon is created:
+
+```sql
+INSERT INTO creation_rate_limit (ip_address, window_start, request_count)
+VALUES (:ip, now(), 1)
+ON CONFLICT (ip_address) DO UPDATE SET
+  request_count = CASE
+    WHEN creation_rate_limit.window_start < now() - interval '1 minute' THEN 1
+    ELSE creation_rate_limit.request_count + 1
+  END,
+  window_start = CASE
+    WHEN creation_rate_limit.window_start < now() - interval '1 minute' THEN now()
+    ELSE creation_rate_limit.window_start
+  END
+RETURNING request_count;
+```
+
+If the returned `request_count` exceeds the configured limit, the request is rejected before touching the `coupons` table, with a new `429 RATE_LIMITED` error code (same shape as ADR-9's error model). The IP is extracted via the same trust boundary as ADR-2 (the load balancer's own header, never a caller-supplied value).
+
+This is the simplest option that works within the stack already chosen elsewhere in this document: no new infrastructure, no lock, and one atomic statement instead of a separate check-then-write. Fixed window allows up to 2x the limit right at a window boundary (e.g. the limit again at the start of the next minute) — acceptable for spam/brute-force deterrence; a sliding window would only be worth the extra complexity if this boundary effect turns out to matter in practice.
+
+Per-request cost is negligible — a single indexed UPSERT on the primary key, the same cost class as the atomic `UPDATE` ADR-5 already uses on UC2's hotter redeem path. The actual concern is table growth, not per-request latency: one row is kept per distinct IP forever, since nothing ever deletes old rows. A scheduled cleanup job (e.g. Spring `@Scheduled`, hourly) deleting rows where `window_start` is older than the window size keeps the table bounded, without affecting the correctness of the rate limit itself.
 
 ---
 
-## 4. Test Strategy — mapped to failure modes
+## 4. Test Strategy
 
-*(to be filled in)*
+**Test doubles policy:** the database is never mocked — its features (unique constraints, the atomic `UPDATE`) are what this whole design relies on, so mocking it would test nothing real. The only mocked dependency is `GeoLocationService` — it's external, outside our control, and hitting the real API in tests would be flaky.
+
+### 4.1. Scope-based tests
+
+Organized by test scope, with the highest-risk categories (concurrency, geolocation adapter resilience, idempotency-under-concurrency, rate-limiting) broken out into their own dedicated levels instead of being buried as a bullet inside "integration" — they're important enough to call out on their own.
+
+#### 4.1.1: Unit tests
+
+Pure business logic, `GeoLocationService` and repositories mocked; no Spring context, fast. Covers: input validation and the character-set restriction (UC1 Variant B, NFR8 — this restriction is also the actual SQL-injection defense for the coupon code, so no separate injection test is needed), code normalization (ADR-7), the idempotency comparison logic (UC1 Variant C vs D), the client-IP trust-boundary parsing (ADR-2 — pure logic, no network needed), and HTTP error-model consistency across all 8 error codes from ADR-9 (NFR6, via a thin `@WebMvcTest` slice) — including `RATE_LIMITED`'s response shape; its triggering condition is exercised separately in 4.1.6, but the shape itself belongs in this consistency check like every other code. *JUnit 5 + Mockito.*
+
+**Additional approach, beyond the hand-picked cases above:** property-based testing (jqwik) generates a wide range of random/edge-case inputs against the validation logic to surface gaps the hand-picked cases missed; mutation testing (PIT) deliberately breaks the production code to check whether this suite actually notices — auditing the coverage this tier already has, rather than adding new coverage of its own.
+
+#### 4.1.2: Integration tests
+
+Testcontainers Postgres + real Flyway migrations — real database, `GeoLocationService` mocked/stubbed. Covers: every UC1/UC2 variant through the real JPA/SQL stack — the unique constraint actually fires (ADR-7), Flyway migrations apply cleanly as a side effect of every test in this tier booting (ADR-8, so no dedicated migration test is needed). *JUnit 5 + Testcontainers.*
+
+#### 4.1.3: Concurrency tests
+
+The single most important test class in the whole project; without it, ADR-5's atomic mechanism is an unverified claim. Real database (Testcontainers), N threads fired simultaneously via `ExecutorService` + `CountDownLatch` (synchronized start) at the same coupon code — assert exactly `max_uses` succeed and the rest get `LIMIT_REACHED` (NFR1). Separate test: N simultaneous identical requests from the same user — assert exactly one succeeds (NFR2). *JUnit 5 + Testcontainers.*
+
+#### 4.1.4: Geolocation adapter tests
+
+WireMock, isolated from business logic — only the adapter itself is under test. Covers: success, timeout → retry per ADR-3's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded/sample real ipwho.is fixture (ADR-4). *JUnit 5 + WireMock.*
+
+**Additional approach, beyond the fixture-based mock above:** contract testing (Pact) against the same boundary — instead of one side hand-writing a fixture of what the response looks like (WireMock), both this service's expectations and the provider's actual response shape are checked against a shared, explicit contract, catching a drift on ipwho.is's side that a static fixture wouldn't.
+
+#### 4.1.5: Idempotency-under-concurrency test
+
+Two simultaneous identical `POST /coupons` requests with the same code: one should get `201`, the other should correctly land on Variant D's `200`, not a race-corrupted result. *JUnit 5 + Testcontainers.*
+
+#### 4.1.6: Rate-limiting test (NFR9, ADR-10)
+
+Real database (Testcontainers). N+1 simultaneous `POST /coupons` requests from the same IP where N is the configured per-minute limit — assert exactly N succeed (`201`/`200`) and the rest get `429 RATE_LIMITED`. Separate test: advance past the window (or use a short test-only window) and confirm the counter resets. *JUnit 5 + Testcontainers.*
+
+#### 4.1.7: E2E/smoke layer
+
+The widest scope in this tier — a full HTTP round-trip through the running application, still within a single process. A handful of `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests hitting the real HTTP endpoints for the two golden paths (create then redeem) end-to-end. Demonstrates the whole stack wired together correctly, on top of (not instead of) the coverage above — not exhaustive variant coverage, that's already 4.1.2's job. *JUnit 5 + Testcontainers + WireMock.*
+
+### 4.2. Tool-based tests
+
+The same coverage as 4.1, regrouped by which tool/infrastructure runs it — reflects how the test code is physically organized in the repo (separate test source sets), not the risk-coverage story 4.1 tells. The last two rows aren't separate numbered tests of their own — they're the additional approaches already noted inline in 4.1.1 and 4.1.4, grouped here by their own distinct tooling.
+
+- **JUnit 5 + Mockito** (no external infra) — 4.1.1 Unit tests
+- **JUnit 5 + Testcontainers (Postgres)** — 4.1.2 Integration tests, 4.1.3 Concurrency tests, 4.1.5 Idempotency-under-concurrency test, 4.1.6 Rate-limiting test
+- **JUnit 5 + WireMock** — 4.1.4 Geolocation adapter tests
+- **JUnit 5 + Testcontainers + WireMock** — 4.1.7 E2E/smoke layer
+- **jqwik + PIT** (additional approach, layered onto 4.1.1's existing suite) — property-based and mutation testing
+- **Pact** (additional approach, layered onto 4.1.4's boundary) — contract testing
+
+### 4.3. Static analysis
+
+- **Static code analysis** — SonarQube (SonarCloud free tier for public repos): code smells, bugs, maintainability.
+- **Test coverage gate** — SonarQube, fed by a JaCoCo XML report generated during the build.
+- **Dependency & CVE scanning** — GitHub Dependabot. Not two separate concerns: Dependabot's alerts are already CVE-based (GitHub Advisory Database), so one free tool covers both "which dependency is outdated" and "which dependency has a known CVE." A paid SCA tool like BlackDuck would duplicate this for no gain at this scale.
+- **Secret scanning** — Gitleaks (free, open-source, runs as a GitHub Actions step), rather than relying on GitHub's native secret scanning — that only applies for free on *public* repos, and this repo is currently private (see TODO). Gitleaks works the same way regardless of the repo's visibility.
+- **Container image scanning** — Trivy (base-image/OS-package CVE scanning). No `Dockerfile` exists in this repo yet, but a Spring Boot service like this is expected to run in a container eventually, so this is planned now rather than deferred.
+
+### 4.4. Load/performance testing
+
+Doesn't fit 4.1's scope axis or 4.2's tool axis — it needs the full multi-instance system running under real infrastructure, wider scope than even 4.1.7's e2e tier reaches, and its tooling (e.g. k6, Gatling) isn't a JUnit extension like anything in 4.2. Drives realistic concurrent traffic against the service to measure actual throughput and latency, rather than the synthetic thread counts used in the concurrency tests (4.1.3). Confirms NFR1/NFR2's concurrency guarantees hold under production-scale load, not just a handful of threads in a test.
+
+### 4.5. Chaos/production-fault testing
+
+Sits outside 4.1/4.2 for the same reason as 4.4: needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh, Toxiproxy). Deliberately injects real failures (dependency outage, network latency, DB slowdown, an instance dying mid-request) instead of a mocked timeout. Unit and integration tests only exercise the failure paths someone thought to write a test for; this catches the ones nobody did — unexpected interactions between concurrency, retries, and failure recovery across multiple instances that only show up under a real, messy failure, not a clean simulated one.
 
 ---
 
