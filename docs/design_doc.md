@@ -343,31 +343,31 @@ Per-request cost is negligible — a single indexed UPSERT on the primary key, t
 
 ### 4.1. Scope-based tests
 
-Organized by test scope, with the highest-risk categories (concurrency, geolocation adapter resilience, idempotency-under-concurrency, rate-limiting) broken out into their own dedicated levels instead of being buried as a bullet inside "integration" — they're important enough to call out on their own.
+Organized by test scope. Concurrency, geolocation adapter, idempotency-under-concurrency, and rate-limiting are broken out from "integration" into their own levels.
 
 #### 4.1.1: Unit tests
 
-Pure business logic, `GeoLocationService` and repositories mocked; no Spring context, fast. Covers: input validation and the character-set restriction (UC1 Variant B, NFR8 — this restriction is also the actual SQL-injection defense for the coupon code, so no separate injection test is needed), code normalization (ADR-7), the idempotency comparison logic (UC1 Variant C vs D), the client-IP trust-boundary parsing (ADR-2 — pure logic, no network needed), and HTTP error-model consistency across all 8 error codes from ADR-9 (NFR6, via a thin `@WebMvcTest` slice) — including `RATE_LIMITED`'s response shape; its triggering condition is exercised separately in 4.1.6, but the shape itself belongs in this consistency check like every other code. *JUnit 5 + Mockito.*
+Pure business logic, `GeoLocationService` and repositories mocked; no Spring context. Covers: input validation and character-set restriction (UC1 Variant B, NFR8 — also the SQL-injection defense for the coupon code), code normalization (ADR-7), idempotency comparison logic (UC1 Variant C vs D), client-IP trust-boundary parsing (ADR-2), and HTTP error-model consistency across all 8 error codes from ADR-9 (NFR6, via a `@WebMvcTest` slice), including `RATE_LIMITED`'s response shape — its trigger condition is covered separately in 4.1.6. *JUnit 5 + Mockito.*
 
-**Additional approach, beyond the hand-picked cases above:** property-based testing (jqwik) generates a wide range of random/edge-case inputs against the validation logic to surface gaps the hand-picked cases missed; mutation testing (PIT) deliberately breaks the production code to check whether this suite actually notices — auditing the coverage this tier already has, rather than adding new coverage of its own.
+**Additional approach:** property-based testing (jqwik) generates randomized inputs against the validation logic; mutation testing (PIT) breaks the production code to check the suite catches it. Both audit existing coverage rather than add new cases.
 
 #### 4.1.2: Integration tests
 
-Testcontainers Postgres + real Flyway migrations — real database, `GeoLocationService` mocked/stubbed. Covers: every UC1/UC2 variant through the real JPA/SQL stack — the unique constraint actually fires (ADR-7), Flyway migrations apply cleanly as a side effect of every test in this tier booting (ADR-8, so no dedicated migration test is needed). *JUnit 5 + Testcontainers.*
+Testcontainers Postgres + real Flyway migrations, `GeoLocationService` mocked/stubbed. Covers: every UC1/UC2 variant through the real JPA/SQL stack, the unique constraint (ADR-7), and Flyway migrations applying cleanly (ADR-8, verified implicitly by every test in this tier booting). *JUnit 5 + Testcontainers.*
 
 #### 4.1.3: Concurrency tests
 
-The single most important test class in the whole project; without it, ADR-5's atomic mechanism is an unverified claim. Real database (Testcontainers), N threads fired simultaneously via `ExecutorService` + `CountDownLatch` (synchronized start) at the same coupon code — assert exactly `max_uses` succeed and the rest get `LIMIT_REACHED` (NFR1). Separate test: N simultaneous identical requests from the same user — assert exactly one succeeds (NFR2). *JUnit 5 + Testcontainers.*
+Verifies ADR-5's atomic concurrency mechanism. Real database (Testcontainers), N threads fired simultaneously via `ExecutorService` + `CountDownLatch` at the same coupon code — assert exactly `max_uses` succeed and the rest get `LIMIT_REACHED` (NFR1). Separate test: N simultaneous identical requests from the same user — assert exactly one succeeds (NFR2). *JUnit 5 + Testcontainers.*
 
 #### 4.1.4: Geolocation adapter tests
 
-WireMock, isolated from business logic — only the adapter itself is under test. Covers: success, timeout → retry per ADR-3's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded/sample real ipwho.is fixture (ADR-4). *JUnit 5 + WireMock.*
+WireMock, isolated from business logic. Covers: success, timeout → retry per ADR-3's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded ipwho.is fixture (ADR-4). *JUnit 5 + WireMock.*
 
-**Additional approach, beyond the fixture-based mock above:** contract testing (Pact) against the same boundary — instead of one side hand-writing a fixture of what the response looks like (WireMock), both this service's expectations and the provider's actual response shape are checked against a shared, explicit contract, catching a drift on ipwho.is's side that a static fixture wouldn't.
+**Additional approach:** contract testing (Pact) on the same boundary — verifies this service's expectations against the provider's actual response shape via a shared contract, instead of a hand-written fixture.
 
 #### 4.1.5: Idempotency-under-concurrency test
 
-Two simultaneous identical `POST /coupons` requests with the same code: one should get `201`, the other should correctly land on Variant D's `200`, not a race-corrupted result. *JUnit 5 + Testcontainers.*
+Two simultaneous identical `POST /coupons` requests with the same code — one gets `201`, the other gets Variant D's `200`, not a race-corrupted result. *JUnit 5 + Testcontainers.*
 
 #### 4.1.6: Rate-limiting test (NFR9, ADR-10)
 
@@ -375,7 +375,7 @@ Real database (Testcontainers). N+1 simultaneous `POST /coupons` requests from t
 
 #### 4.1.7: E2E/smoke layer
 
-The widest scope in this tier — a full HTTP round-trip through the running application, still within a single process. A handful of `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests hitting the real HTTP endpoints for the two golden paths (create then redeem) end-to-end. Demonstrates the whole stack wired together correctly, on top of (not instead of) the coverage above — not exhaustive variant coverage, that's already 4.1.2's job. *JUnit 5 + Testcontainers + WireMock.*
+Full HTTP round-trip through the running application, single process. `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests for the two golden paths (create then redeem). Not exhaustive variant coverage — that's 4.1.2. *JUnit 5 + Testcontainers + WireMock.*
 
 ### 4.2. Tool-based tests
 
@@ -398,11 +398,11 @@ The same coverage as 4.1, regrouped by which tool/infrastructure runs it — ref
 
 ### 4.4. Load/performance testing
 
-Doesn't fit 4.1's scope axis or 4.2's tool axis — it needs the full multi-instance system running under real infrastructure, wider scope than even 4.1.7's e2e tier reaches, and its tooling (e.g. k6, Gatling) isn't a JUnit extension like anything in 4.2. Drives realistic concurrent traffic against the service to measure actual throughput and latency, rather than the synthetic thread counts used in the concurrency tests (4.1.3). Confirms NFR1/NFR2's concurrency guarantees hold under production-scale load, not just a handful of threads in a test.
+Needs the full multi-instance system under real infrastructure — beyond 4.1.7's single-process e2e scope, and its tooling (e.g. k6, Gatling) isn't JUnit-based. Drives realistic concurrent traffic against the service to measure actual throughput and latency, rather than the synthetic thread counts used in the concurrency tests (4.1.3). Confirms NFR1/NFR2's concurrency guarantees hold under production-scale load.
 
 ### 4.5. Chaos/production-fault testing
 
-Sits outside 4.1/4.2 for the same reason as 4.4: needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh, Toxiproxy). Deliberately injects real failures (dependency outage, network latency, DB slowdown, an instance dying mid-request) instead of a mocked timeout. Unit and integration tests only exercise the failure paths someone thought to write a test for; this catches the ones nobody did — unexpected interactions between concurrency, retries, and failure recovery across multiple instances that only show up under a real, messy failure, not a clean simulated one.
+Needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh, Toxiproxy). Deliberately injects real failures (dependency outage, network latency, DB slowdown, an instance dying mid-request) instead of a mocked timeout — surfacing failure-recovery interactions across instances that unit/integration tests, limited to failure paths someone wrote a test for, don't reach.
 
 ---
 
