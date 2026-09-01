@@ -108,7 +108,7 @@ Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per 
 - **UC-O2: List/search coupons** — see all available or query matching coupons.
 - **UC-O3: Deactivate a coupon before its limit is reached** — withdrawing a promotion.
 - **UC-O4: Set coupon expiry date** — the task only defines max_uses, not an expiry date.
-- **UC-O5: Reversing a usage** — removes coupon usage record, allowing client to redeem cobe ones more (e.g. in case of failed 1st attempt).
+- **UC-O5: Reversing a usage** — removes coupon usage record, allowing client to redeem code once more (e.g. in case of failed 1st attempt).
 
 ---
 
