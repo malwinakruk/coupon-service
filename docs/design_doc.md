@@ -12,19 +12,21 @@ A REST service for managing discount coupons — create coupons with a usage lim
 
 | Field | Type | Description |
 |---|---|---|
-| `code` | string | Coupon code, normalized to lowercase, unique |
-| `created_at` | timestamp | Creation date |
-| `max_uses` | int > 0 | Maximum number of uses |
-| `current_uses` | int, 0 ≤ x ≤ max_uses | Current number of uses |
-| `country` | country code | Country the coupon is intended for |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Surrogate identifier |
+| `code` | `VARCHAR(64)` | Coupon code, normalized to lowercase, unique |
+| `created_at` | `TIMESTAMPTZ` | Creation date |
+| `max_uses` | `INTEGER` (`CHECK (max_uses > 0)`) | Maximum number of uses |
+| `current_uses` | `INTEGER` (`CHECK (current_uses BETWEEN 0 AND max_uses)`) | Current number of uses |
+| `country` | `CHAR(2)` | Country the coupon is intended for, as an ISO 3166-1 alpha-2 code (this format is what ADR-4's chosen geolocation provider returns, so no conversion is needed when comparing) |
 
 **Entity model: Coupon usage (`coupon_usage`)**
 
 | Field | Type | Description |
 |---|---|---|
-| `coupon_id` | reference | Which coupon this refers to |
-| `user_id` | string | Who used it (arbitrary identifier from the request) |
-| `used_at` | timestamp | When the usage was registered |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Surrogate identifier |
+| `coupon_id` | `BIGINT REFERENCES coupons(id)` | Which coupon this refers to |
+| `user_id` | `VARCHAR(255)` | Who used it (arbitrary identifier from the request; no format restriction like `code` has, but still length-bounded to avoid unbounded client input) |
+| `used_at` | `TIMESTAMPTZ` | When the usage was registered |
 
 Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per coupon (NFR2 — one use per user under concurrency).
 
@@ -57,8 +59,11 @@ Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per 
 **Variant B — invalid input:**
 2b. Validation fails (branches after step 2 of Variant A; e.g. max_uses ≤ 0, missing code, code with a disallowed character, unknown country) → response `400 INVALID_REQUEST`. End.
 
-**Variant C — code already exists (case-insensitive):**
-4c. The save violates the unique constraint on the normalized code (branches after step 4 of Variant A; `WIOSNA` conflicts with the existing `wiosna`) → response `409 CODE_ALREADY_EXISTS`. End.
+**Variant C — code already exists with different data (case-insensitive):**
+4c. The save violates the unique constraint on the normalized code (branches after step 4 of Variant A; `WIOSNA` conflicts with the existing `wiosna`), and the existing coupon's data differs from what was requested → response `409 CODE_ALREADY_EXISTS`. End.
+
+**Variant D — retry with identical data (idempotency of retries):**
+4d. The save violates the unique constraint on the normalized code (branches after step 4 of Variant A), but the existing coupon's max_uses and country match exactly what was requested — this is the same request retried (e.g. after a client-side timeout), not a genuine conflict → response `200 OK` with the existing coupon's data. End.
 
 ### UC2: Use a coupon
 
@@ -172,7 +177,58 @@ Reference for section 3 — the window between checking a state and writing base
 
 ## 3. Architectural Decisions — mini-ADRs
 
-### ADR-1: Concurrency-control mechanism
+### ADR-1: Application framework
+
+**Context:** we need a framework to build the REST API, wire everything together, and talk to the database, without spending the task's time budget rebuilding that plumbing from scratch.
+
+**References:** UC1, UC2
+
+**Alternatives considered:**
+1. Plain Java with a minimal embedded server (e.g. raw HTTP server or a micro-framework like Javalin). Full control, but dependency injection, input validation, and JSON handling all have to be hand-built and tested ourselves.
+2. Micronaut or Quarkus. Similar feature set to Spring Boot, but a smaller ecosystem and less documentation for this exact combination (JPA + Postgres + validation), meaning more time spent working around unfamiliar edges instead of on the actual business rules.
+3. **Spring Boot — chosen, see Decision.** Batteries-included: dependency injection, Spring Data JPA, request validation, an embedded server, and structured logging, all mature and heavily documented.
+
+**Decision:** option 3 — Spring Boot with Spring Web MVC and Spring Data JPA for persistence. It's the standard, best-documented choice for exactly this shape of service — a REST API backed by a relational database — so it lets the effort go into the actual business rules instead of re-implementing dependency injection, validation, and JSON handling that mature libraries already solve well.
+
+### ADR-2: Client IP extraction behind a load balancer
+
+**Context:** the service needs a user's real IP address to check their country, even though NFR4 puts a load balancer in front of every request.
+
+**References:** UC2, NFR4
+
+**Alternatives considered:**
+1. Read the IP directly off the incoming connection (e.g. `request.getRemoteAddr()`). Behind a load balancer this always returns the load balancer's own IP, never the client's — country-checking would be broken for every single request.
+2. Trust the first address in the `X-Forwarded-For` header. That value is supplied by whoever sent the request — including the client itself — so anyone can put any country's IP there and bypass the restriction entirely.
+3. **Trust only the IP appended by our own load balancer (the last hop added by infrastructure we control), not anything the caller supplied — chosen, see Decision.**
+
+**Decision:** option 3 — extract the client IP from the header value our own load balancer appends, never from a value a caller could set directly. This is the only option that can't be forged by the caller — trusting the connection IP breaks the moment there's a load balancer, and trusting the client-supplied header value directly means anyone can claim to be calling from an allowed country.
+
+### ADR-3: Geolocation strategy
+
+**Context:** we need a reliable way to find out which country a user is in from their IP address, without letting a slow or broken external service block or break the rest of the system.
+
+**References:** UC2, NFR5
+
+**Alternatives considered:**
+1. Call a specific provider's SDK directly from inside the UC2 redeem logic. Fastest to write, but ties business logic to one vendor's shapes and makes the redeem flow hard to unit-test (every test would need a real or fully-mocked HTTP call baked into the business code).
+2. **Define a small `GeoLocationService` interface — chosen, see Decision** (e.g. "given an IP, return a country or a failure") with one HTTP-based implementation behind it, wired in via dependency injection.
+
+**Decision:** option 2 — a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (which one is decided in ADR-4), with an explicit timeout and a small, bounded number of retries using exponential backoff. The retry/backoff is implemented declaratively via Spring Retry's `@Retryable`/`@Backoff` annotations rather than a hand-rolled retry loop — a pattern already proven in production for exactly this kind of external-call resilience. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
+
+### ADR-4: Geolocation provider choice
+
+**Context:** ADR-3 decided to call an external provider through an interface — now we need to pick which free provider that adapter actually calls.
+
+**References:** UC2, NFR5
+
+**Alternatives considered:**
+1. **ip-api.com** — no signup or API key, simple flat JSON response. But the free tier is HTTP-only (no HTTPS), limited to non-commercial use, and capped at 45 requests/minute.
+2. **ipapi.co** — no API key needed for basic free use, HTTPS supported, but a lower free cap of 1,000 requests/day.
+3. **ipwho.is — chosen, see Decision.** No signup or API key, HTTPS supported on the free tier, and the highest free daily limit of the three (2,000 requests/day).
+
+**Decision:** option 3, ipwho.is, called via the `GeoLocationService` adapter from ADR-3. It's the only one of the three that combines no signup, HTTPS, and the largest free quota — ip-api.com forces plain HTTP and a non-commercial restriction, and ipapi.co halves the daily request budget for no real benefit. ipwho.is returns the country as an ISO 3166-1 alpha-2 code, which is why the `Coupon.country` field (1.1 Definitions) is stored in that same format — no conversion needed to compare the two.
+
+### ADR-5: Concurrency-control mechanism
 
 **Context:** a coupon's usage limit must never be exceeded, and no one should be able to use it twice, even when many people try to use it at the same time.
 
@@ -193,7 +249,20 @@ Reference for section 3 — the window between checking a state and writing base
 
 The insert runs first, so a repeat request from a user who already redeemed fails fast without ever touching the coupon row. This is the simplest option that works: it needs no locks, no retries, and no extra infrastructure — and unlike holding a lock, it never blocks other requests while waiting on the external country lookup.
 
-### ADR-2: Case-insensitive code uniqueness
+### ADR-6: Persistence approach for the concurrency-critical write
+
+**Context:** the way we'd normally use the database (load a record, change it, save it back) would accidentally undo the exact concurrency fix from ADR-5 — the save writes back whatever value the app already computed in memory, instead of re-checking the live count against `max_uses` at the moment of the write.
+
+**References:** UC2, NFR1, NFR2
+
+**Alternatives considered:**
+1. Use Spring Data JPA/Hibernate's normal entity lifecycle everywhere, including the redeem write (load the entity, change a field, `save()`). Fits naturally with ADR-1, but Hibernate's usual save flow reads a value and writes it back later — exactly the TOCTOU gap ADR-5 exists to close.
+2. Bypass JPA entirely and use plain JDBC/`JdbcTemplate` for every database operation. Full control over every statement, but throws away Spring Data's convenience for the simple, non-critical parts of the service (creating a coupon, looking one up).
+3. **Spring Data JPA repositories for everything except the redeem update, which uses a `@Modifying` JPQL/native query to issue the exact atomic `UPDATE ... WHERE` directly — chosen, see Decision.**
+
+**Decision:** option 3. This keeps Spring Boot's normal JPA repositories everywhere they're safe, and only steps around the ORM's usual load-then-save pattern for the one write where that pattern would silently undo ADR-5's concurrency guarantee.
+
+### ADR-7: Case-insensitive code uniqueness
 
 **Context:** coupon codes must stay unique no matter how they're capitalized, even if two people try to create the same code at the same time.
 
@@ -205,19 +274,19 @@ The insert runs first, so a repeat request from a user who already redeemed fail
 
 **Decision:** option 2 — normalize to lowercase on write, plain `UNIQUE` constraint on `code`, and every lookup normalizes its input the same way before querying. It's the simplest schema that still makes two identical codes impossible to save at the same time — the other approach would need a special kind of index everywhere just to preserve the original letter casing, which nothing actually asks for.
 
-### ADR-3: Geolocation strategy
+### ADR-8: Schema management
 
-**Context:** we need a reliable way to find out which country a user is in from their IP address, without letting a slow or broken external service block or break the rest of the system.
+**Context:** the database schema — including the unique constraints the whole concurrency design depends on — needs to change in a controlled, reviewable way, not be inferred automatically every time the app starts.
 
-**References:** UC2, NFR5
+**References:** NFR1, NFR2, NFR3
 
 **Alternatives considered:**
-1. Call a specific provider's SDK directly from inside the UC2 redeem logic. Fastest to write, but ties business logic to one vendor's shapes and makes the redeem flow hard to unit-test (every test would need a real or fully-mocked HTTP call baked into the business code).
-2. **Define a small `GeoLocationService` interface — chosen, see Decision** (e.g. "given an IP, return a country or a failure") with one HTTP-based implementation behind it, wired in via dependency injection.
+1. Hibernate's `ddl-auto` (`update`/`create`). Convenient for prototyping, but it infers the schema from entity annotations and can alter or drop a column or constraint without anyone explicitly reviewing that change.
+2. **Flyway versioned SQL migration scripts — chosen, see Decision.**
 
-**Decision:** option 2 — a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (e.g. ip-api.com), with an explicit timeout and a small, bounded number of retries using exponential backoff. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
+**Decision:** option 2 — every schema change, including the unique constraints from ADR-5/ADR-7, is an explicit, ordered, version-controlled SQL file. Auto-generated DDL could silently change or drop one of those constraints without anyone noticing until it's already happened in a running database.
 
-### ADR-4: HTTP error model
+### ADR-9: HTTP error model
 
 **Context:** every reason a request gets rejected needs to be clearly identifiable by whoever is calling the API, not lumped together as one generic error.
 
@@ -240,5 +309,4 @@ The insert runs first, so a repeat request from a user who already redeemed fail
 
 ## TODO
 
-- **Format of the `country` field** — undecided: an ISO code (e.g. `PL`, ISO 3166-1 alpha-2) or the full country name. This affects how we compare the coupon's country against the country returned by the geolocation service (they must be in the same format). To be decided alongside the data model in section 3.
 - **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
