@@ -12,7 +12,7 @@ A REST service for managing discount coupons — create coupons with a usage lim
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Surrogate identifier |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Identifier |
 | `code` | `VARCHAR(64)` | Coupon code, normalized to lowercase, unique |
 | `created_at` | `TIMESTAMPTZ` | Creation date |
 | `max_uses` | `INTEGER` (`CHECK (max_uses > 0)`) | Maximum number of uses |
@@ -23,7 +23,7 @@ A REST service for managing discount coupons — create coupons with a usage lim
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Surrogate identifier |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` (primary key) | Identifier |
 | `coupon_id` | `BIGINT REFERENCES coupons(id)` | Which coupon this refers to |
 | `user_id` | `VARCHAR(255)` | Who used it (arbitrary identifier from the request; no format restriction like `code` has, but still length-bounded to avoid unbounded client input) |
 | `used_at` | `TIMESTAMPTZ` | When the usage was registered |
@@ -104,17 +104,15 @@ Unique constraint on (`coupon_id`, `user_id`) — enforces one use per user per 
 
 ### Optional extensions (beyond this task's required scope)
 
-- **UC-O1: Get coupon status (GET)** — check current_uses/max_uses without using it; useful for the frontend/support.
-- **UC-O2: List/search coupons** — admin panel.
+- **UC-O1: Get coupon status (GET)** — check coupon properties; useful for the frontend/support.
+- **UC-O2: List/search coupons** — see all available or query matching coupons.
 - **UC-O3: Deactivate a coupon before its limit is reached** — withdrawing a promotion.
-- **UC-O4: Coupon expiry date** — the task only defines max_uses, not an expiry date; deliberately not adding this field.
-- **UC-O5: Reversing a usage** — no such requirement in the task, no business justification to add it.
+- **UC-O4: Set coupon expiry date** — the task only defines max_uses, not an expiry date.
+- **UC-O5: Reversing a usage** — removes coupon usage record, allowing client to redeem cobe ones more (e.g. in case of failed 1st attempt).
 
 ---
 
-## 2. Non-Functional Requirements — Measurable Architecture Characteristics
-
-The task speaks generally of "scalable" and "multi-threaded production environment" — below, these phrases are turned into concrete, testable requirements.
+## 2. Non-Functional Requirements
 
 ### NFR1: Exact usage limit under concurrency
 
