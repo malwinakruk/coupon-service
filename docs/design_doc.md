@@ -339,7 +339,7 @@ The service was built stateless from the start (ADR-4, NFR4): every concurrency 
 
 ### 5.1. Containerization
 
-Add a multi-stage `Dockerfile`: a Maven build stage producing the fat jar, copied into a slim JRE 24 runtime image (e.g. `eclipse-temurin:24-jre-alpine`). Add a `.dockerignore` (`target/`, `.git/`, etc.) so the build context stays small. `spring-boot-docker-compose` already excludes itself from the packaged jar by design (README), so it needs no special handling for the container image.
+Add a `Dockerfile` that packages the fat jar into a slim JRE 24 runtime image (e.g. `eclipse-temurin:24-jre-alpine`); it does not compile the jar itself — `mvn clean package` (or `-DskipTests`) runs as its own step first (matches 5.7's CI/CD flow: build the jar, then build and push the image), so `docker build` doesn't redo work a prior step already did. Add a `.dockerignore` (`target/*` with `!target/*.jar`, `.git/`, etc.) so the build context stays small. `spring-boot-docker-compose` already excludes itself from the packaged jar by design (README), so it needs no special handling for the container image.
 
 ### 5.2. Database configuration for a managed Postgres instance
 
@@ -379,13 +379,3 @@ The Kubernetes cluster, the managed Postgres instance, the container registry, a
 ### 5.7. CI/CD
 
 None exists yet. Needed for repeatable deployments: build the jar, build and push the image to the container registry, then `terraform apply` for any infrastructure change and `helm upgrade` for the application release.
-
-### 5.8. Recommended, not blocking
-
-Relates to NFR9 (Recommendations, logging for traceability), also unaddressed today. With multiple pods, tailing one process's stdout no longer shows the whole story of a request — a correlation/trace ID attached to each request and propagated through logs makes debugging across pods tractable.
-
----
-
-## TODO
-
-- **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
