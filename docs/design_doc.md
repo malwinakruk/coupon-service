@@ -180,7 +180,7 @@ Reference for section 3 — the window between checking a state and writing base
 1. Call a specific provider's SDK directly from inside the UC2 redeem logic. Fastest to write, but ties business logic to one vendor's shapes and makes the redeem flow hard to unit-test (every test would need a real or fully-mocked HTTP call baked into the business code).
 2. **Define a small `GeoLocationService` interface — chosen, see Decision** (e.g. "given an IP, return a country or a failure") with one HTTP-based implementation behind it, wired in via dependency injection.
 
-**Decision:** option 2 — an explicit timeout, a bounded number of retries with exponential backoff, and fail-closed behavior (NFR5), via a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (which one is decided in ADR-3). The retry/backoff is implemented declaratively via Spring Retry's `@Retryable`/`@Backoff` annotations rather than a hand-rolled retry loop — a pattern already proven in production for exactly this kind of external-call resilience. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
+**Decision:** option 2 — an explicit timeout, a bounded number of retries with exponential backoff, and fail-closed behavior (NFR5), via a `GeoLocationService` interface with an HTTP-based adapter calling a free provider (which one is decided in ADR-3). The retry/backoff is implemented declaratively via Spring's built-in `@Retryable` annotation (`org.springframework.resilience`, enabled via `@EnableResilientMethods`) rather than a hand-rolled retry loop — native to Spring Framework 7/Spring Boot 4, no separate dependency needed. If all retries fail, the call reports failure and UC2 Variant C fails the request closed (`503 GEO_UNAVAILABLE`) rather than hanging or letting the request through unchecked. It's easy to test and swap providers later, unlike calling a specific vendor's code directly from the business logic, which would lock us into one provider and make testing much harder.
 
 ### ADR-3: Geolocation provider choice
 
@@ -292,7 +292,7 @@ Verifies ADR-4's atomic concurrency mechanism. Real database (Testcontainers), N
 
 #### 4.1.4: Geolocation adapter tests
 
-MockServer, isolated from business logic. Covers: success, timeout → retry per ADR-2's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded ipwho.is fixture (ADR-3). *JUnit 5 + MockServer.*
+MockServer, isolated from business logic. Covers: success, timeout → retry per ADR-2's retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded ipwho.is fixture (ADR-3). *JUnit 5 + MockServer.*
 
 **Additional approach:** contract testing (Pact) on the same boundary — verifies this service's expectations against the provider's actual response shape via a shared contract, instead of a hand-written fixture.
 
