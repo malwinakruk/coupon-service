@@ -58,7 +58,14 @@ Database connection details aren't set explicitly: `spring-boot-docker-compose` 
 mvn clean verify
 ```
 
-Runs the full test suite, including integration tests backed by Testcontainers.
+Runs the full test suite, including integration tests backed by Testcontainers, and produces the
+runnable jar at `target/coupon-service-*.jar`.
+
+To build the runnable jar without running tests:
+
+```
+mvn clean package -DskipTests
+```
 
 ### Run
 
