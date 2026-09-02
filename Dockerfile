@@ -1,3 +1,4 @@
+# Multi-stage build: compiles the fat jar with Maven, then runs it on a minimal JRE image.
 FROM maven:3.9-eclipse-temurin-24 AS build
 WORKDIR /build
 COPY pom.xml .
