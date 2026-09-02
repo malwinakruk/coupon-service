@@ -1,4 +1,4 @@
 /**
- * The {@code GeoLocationService} interface and its HTTP adapter (ADR-2).
+ * The {@code GeoLocationService} interface and its HTTP adapter.
  */
 package com.empik.couponservice.client;

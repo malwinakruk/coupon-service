@@ -42,7 +42,7 @@ class CouponPersistenceIntegrationTest {
         assertThat(coupon.getId()).isNotNull();
     }
 
-    /** Two coupons with the same code violate the unique constraint (ADR-6). */
+    /** Two coupons with the same code violate the unique constraint. */
     @Test
     void rejectsDuplicateCode() {
         entityManager.persist(new Coupon("summer2026", 10, "PL"));
@@ -78,7 +78,7 @@ class CouponPersistenceIntegrationTest {
         assertThat(usage.getId()).isNotNull();
     }
 
-    /** The same user using the same coupon twice violates the unique constraint (ADR-4). */
+    /** The same user using the same coupon twice violates the unique constraint. */
     @Test
     void rejectsDuplicateUsageByTheSameUser() {
         Coupon coupon = new Coupon("spring2026", 3, "PL");

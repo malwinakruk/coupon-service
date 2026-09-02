@@ -1,4 +1,4 @@
 /**
- * Custom exceptions and the shared HTTP error-response model (ADR-8).
+ * Custom exceptions and the shared HTTP error-response model.
  */
 package com.empik.couponservice.exception;

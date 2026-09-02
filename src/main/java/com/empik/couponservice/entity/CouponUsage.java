@@ -15,7 +15,8 @@ import java.time.OffsetDateTime;
  * A single successful registration of a coupon being used by a specific user.
  *
  * <p>The unique constraint on ({@code coupon_id}, {@code user_id}) is what enforces one use
- * per user per coupon (ADR-4) — a repeat insert fails immediately with a constraint violation.
+ * per user per coupon — a repeat insert fails immediately with a constraint violation, so two
+ * concurrent requests from the same user can never both succeed.
  */
 @Entity
 @Table(
@@ -53,38 +54,22 @@ public class CouponUsage {
         this.usedAt = OffsetDateTime.now();
     }
 
-    /**
-     * Returns the surrogate identifier.
-     *
-     * @return the identifier
-     */
+    /** @return the surrogate identifier */
     public Long getId() {
         return id;
     }
 
-    /**
-     * Returns the coupon this usage refers to.
-     *
-     * @return the coupon
-     */
+    /** @return the coupon this usage refers to */
     public Coupon getCoupon() {
         return coupon;
     }
 
-    /**
-     * Returns the identifier of the user who used the coupon.
-     *
-     * @return the user identifier
-     */
+    /** @return the identifier of the user who used the coupon */
     public String getUserId() {
         return userId;
     }
 
-    /**
-     * Returns when the usage was registered.
-     *
-     * @return the usage timestamp
-     */
+    /** @return when the usage was registered */
     public OffsetDateTime getUsedAt() {
         return usedAt;
     }
