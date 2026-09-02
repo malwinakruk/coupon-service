@@ -3,6 +3,8 @@ package com.empik.couponservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.empik.couponservice.entity.Coupon;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,16 +61,21 @@ class CouponConcurrencyTest {
         CountDownLatch ready = new CountDownLatch(attempts);
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successCount = new AtomicInteger();
+        List<Throwable> failures = new CopyOnWriteArrayList<>();
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
 
         for (int i = 0; i < attempts; i++) {
             executor.submit(() -> {
                 ready.countDown();
                 awaitUninterruptibly(start);
-                Integer updated = transactionTemplate.execute(
-                        status -> couponRepository.incrementUsageIfUnderLimit(couponId));
-                if (updated != null && updated > 0) {
-                    successCount.incrementAndGet();
+                try {
+                    Integer updated = transactionTemplate.execute(
+                            status -> couponRepository.incrementUsageIfUnderLimit(couponId));
+                    if (updated != null && updated > 0) {
+                        successCount.incrementAndGet();
+                    }
+                } catch (RuntimeException e) {
+                    failures.add(e);
                 }
             });
         }
@@ -78,6 +85,7 @@ class CouponConcurrencyTest {
         executor.shutdown();
         assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
+        assertThat(failures).isEmpty();
         assertThat(successCount.get()).isEqualTo(maxUses);
         assertThat(couponRepository.findById(couponId).orElseThrow().getCurrentUses()).isEqualTo(maxUses);
     }

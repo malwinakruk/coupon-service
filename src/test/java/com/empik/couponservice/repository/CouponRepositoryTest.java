@@ -53,7 +53,8 @@ class CouponRepositoryTest {
     void incrementFailsAtLimit() {
         Coupon coupon = new Coupon("atlimit", 1, "PL");
         Coupon saved = couponRepository.saveAndFlush(coupon);
-        couponRepository.incrementUsageIfUnderLimit(saved.getId());
+        int firstIncrement = couponRepository.incrementUsageIfUnderLimit(saved.getId());
+        assertThat(firstIncrement).isEqualTo(1);
 
         int updated = couponRepository.incrementUsageIfUnderLimit(saved.getId());
 
