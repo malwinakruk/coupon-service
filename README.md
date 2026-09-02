@@ -11,11 +11,13 @@ REST service for creating and redeeming discount coupons, safely under concurren
   - [Configuration](#configuration)
   - [Build](#build)
   - [Run](#run)
+  - [Containerization](#containerization)
 - [Usage](#usage)
   - [Create a coupon](#create-a-coupon)
   - [Redeem a coupon](#redeem-a-coupon)
   - [Error responses](#error-responses)
 - [Testing](#testing)
+- [Deploying to Kubernetes](#deploying-to-kubernetes)
 
 ## Overview
 
@@ -101,6 +103,27 @@ Running the packaged jar directly (`java -jar target/coupon-service-*.jar`) does
 auto-start Postgres — Spring Boot's Docker Compose support is a development-time feature, excluded
 from the packaged jar by design. Use `mvn spring-boot:run` for local development.
 
+### Containerization
+
+The `Dockerfile` packages an already-built jar — it doesn't compile anything itself, so build the
+jar first:
+
+```
+mvn clean package -DskipTests
+docker build -t coupon-service .
+```
+
+Run it against a Postgres instance it can reach, passing connection details as environment
+variables (`spring.datasource.*` isn't set in `application.yml` — see [Configuration](#configuration)):
+
+```
+docker run -p 8080:8080 \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/coupon_service \
+  -e SPRING_DATASOURCE_USERNAME=coupon_service \
+  -e SPRING_DATASOURCE_PASSWORD=coupon_service \
+  coupon-service
+```
+
 ## Usage
 
 ### Create a coupon
@@ -166,3 +189,13 @@ message:
 ```
 mvn clean verify
 ```
+
+## Deploying to Kubernetes
+
+The service is stateless by design (ADR-4, NFR4) — every concurrency guarantee lives in Postgres,
+not in application memory, so running multiple pods behind the same database needs no code change.
+
+Only the `Dockerfile` exists so far. The rest — a Helm chart for the Kubernetes manifests, Terraform
+for the cluster/database/registry, secrets, health-check probes, and CI/CD — is documented, not yet
+built, and deliberately not tied to a specific cloud provider: see
+[`docs/design_doc.md`](docs/design_doc.md), section 5.
