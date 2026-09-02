@@ -321,7 +321,7 @@ The same coverage as 4.1, regrouped by which tool/infrastructure runs it — ref
 - **Test coverage gate** — SonarQube, fed by a JaCoCo XML report generated during the build.
 - **Dependency & CVE scanning** — GitHub Dependabot. Not two separate concerns: Dependabot's alerts are already CVE-based (GitHub Advisory Database), so one free tool covers both "which dependency is outdated" and "which dependency has a known CVE." A paid SCA tool like BlackDuck would duplicate this for no gain at this scale.
 - **Secret scanning** — Gitleaks (free, open-source, runs as a GitHub Actions step), rather than relying on GitHub's native secret scanning — that only applies for free on *public* repos, and this repo is currently private (see TODO). Gitleaks works the same way regardless of the repo's visibility.
-- **Container image scanning** — Trivy (base-image/OS-package CVE scanning). No `Dockerfile` exists in this repo yet, but a Spring Boot service like this is expected to run in a container eventually, so this is planned now rather than deferred.
+- **Container image scanning** — Trivy (base-image/OS-package CVE scanning), scanning the image built from the `Dockerfile` (section 5.1). Not yet wired into CI/CD (see 5.7).
 
 ### 4.4. Load/performance testing
 
@@ -379,3 +379,13 @@ The Kubernetes cluster, the managed Postgres instance, the container registry, a
 ### 5.7. CI/CD
 
 None exists yet. Needed for repeatable deployments: build the jar, build and push the image to the container registry, then `terraform apply` for any infrastructure change and `helm upgrade` for the application release.
+
+### 5.8. Recommended, not blocking
+
+Relates to NFR9 (Recommendations, logging for traceability), also unaddressed today. With multiple pods, tailing one process's stdout no longer shows the whole story of a request — a correlation/trace ID attached to each request and propagated through logs makes debugging across pods tractable.
+
+---
+
+## TODO
+
+- **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
