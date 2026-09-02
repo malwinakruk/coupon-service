@@ -5,6 +5,7 @@ REST service for creating and redeeming discount coupons, safely under concurren
 ## Table of Contents
 
 - [Overview](#overview)
+  - [Design doc](#design-doc)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
   - [Configuration](#configuration)
@@ -15,7 +16,6 @@ REST service for creating and redeeming discount coupons, safely under concurren
   - [Redeem a coupon](#redeem-a-coupon)
   - [Error responses](#error-responses)
 - [Testing](#testing)
-- [Design docs](#design-docs)
 
 ## Overview
 
@@ -32,6 +32,20 @@ Two use cases:
 Stack: Java 24, Spring Boot 4 (Web MVC, Spring Data JPA), PostgreSQL, Flyway for schema migrations,
 `RestClient` + Spring's native `@Retryable` for the geolocation adapter (calls
 [ipwho.is](https://ipwho.is)).
+
+### Design doc
+
+This was a design-first exercise: [`docs/design_doc.md`](docs/design_doc.md) was written before any
+code, then kept in sync with the code as it evolved. It covers the functional requirements (both
+use cases, with every success and failure variant spelled out), the non-functional requirements
+(concurrency safety, resilience, error handling), and a set of mini-ADRs — for each significant
+decision (framework, concurrency mechanism, persistence approach, error model, etc.), the
+alternatives considered and why the chosen one won. It also lays out the test strategy by scope
+(unit, integration, concurrency, adapter, E2E) before any tests were written.
+
+The service itself was then built incrementally, one layer or use case per branch (schema →
+repositories → service → controller for UC1, then the same for UC2), each verified against a real
+Postgres instance before merging.
 
 ## Installation
 
@@ -145,7 +159,3 @@ message:
 ```
 mvn clean verify
 ```
-
-## Design docs
-
-Design decisions and rationale: [`docs/design_doc.md`](docs/design_doc.md).
