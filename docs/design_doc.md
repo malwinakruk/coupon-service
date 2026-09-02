@@ -379,13 +379,3 @@ The Kubernetes cluster, the managed Postgres instance, the container registry, a
 ### 5.7. CI/CD
 
 None exists yet. Needed for repeatable deployments: build the jar, build and push the image to the container registry, then `terraform apply` for any infrastructure change and `helm upgrade` for the application release.
-
-### 5.8. Recommended, not blocking
-
-Relates to NFR9 (Recommendations, logging for traceability), also unaddressed today. With multiple pods, tailing one process's stdout no longer shows the whole story of a request — a correlation/trace ID attached to each request and propagated through logs makes debugging across pods tractable.
-
----
-
-## TODO
-
-- **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
