@@ -321,7 +321,7 @@ The same coverage as 4.1, regrouped by which tool/infrastructure runs it — ref
 - **Test coverage gate** — SonarQube, fed by a JaCoCo XML report generated during the build.
 - **Dependency & CVE scanning** — GitHub Dependabot. Not two separate concerns: Dependabot's alerts are already CVE-based (GitHub Advisory Database), so one free tool covers both "which dependency is outdated" and "which dependency has a known CVE." A paid SCA tool like BlackDuck would duplicate this for no gain at this scale.
 - **Secret scanning** — Gitleaks (free, open-source, runs as a GitHub Actions step), rather than relying on GitHub's native secret scanning — that only applies for free on *public* repos, and this repo is currently private (see TODO). Gitleaks works the same way regardless of the repo's visibility.
-- **Container image scanning** — Trivy (base-image/OS-package CVE scanning). No `Dockerfile` exists in this repo yet, but a Spring Boot service like this is expected to run in a container eventually, so this is planned now rather than deferred.
+- **Container image scanning** — Trivy (base-image/OS-package CVE scanning), scanning the image built from the `Dockerfile` (section 5.1). Not yet wired into CI/CD (see 5.7).
 
 ### 4.4. Load/performance testing
 
@@ -333,6 +333,49 @@ Needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh,
 
 ---
 
-## TODO
+## 5. Deploying to Kubernetes
 
-- **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
+The service was built stateless from the start (ADR-4, NFR4): every concurrency guarantee lives in Postgres, not in application memory. Running many pods behind the same database needs no code change for correctness — the work below is entirely about packaging, configuration, and infrastructure. None of it is tied to a specific cloud provider; where a concrete example is useful, Azure is used only as one illustration, not a requirement.
+
+### 5.1. Containerization
+
+Add a `Dockerfile` that packages the fat jar into a slim JRE 24 runtime image (e.g. `eclipse-temurin:24-jre-alpine`); it does not compile the jar itself — `mvn clean package` (or `-DskipTests`) runs as its own step first (matches 5.7's CI/CD flow: build the jar, then build and push the image), so `docker build` doesn't redo work a prior step already did. Add a `.dockerignore` (`target/*` with `!target/*.jar`, `.git/`, etc.) so the build context stays small. `spring-boot-docker-compose` already excludes itself from the packaged jar by design (README), so it needs no special handling for the container image.
+
+### 5.2. Database configuration for a managed Postgres instance
+
+`application.yml` currently has no `spring.datasource.*` properties — locally, `spring-boot-docker-compose` supplies them, which doesn't exist in the container image. For a real deployment, against any managed Postgres offering (Azure Postgres Flexible Server, AWS RDS, GCP Cloud SQL, self-hosted):
+
+- Set `spring.datasource.url/username/password` via environment variables (`SPRING_DATASOURCE_URL`, etc.) — Spring Boot's relaxed binding maps these automatically, no template needed.
+- The JDBC URL typically needs `?sslmode=require` — most managed Postgres offerings enforce SSL by default.
+- Size `spring.datasource.hikari.maximum-pool-size` against the instance's `max_connections`, accounting for (pool size × pod count) plus the extra short-lived connections `CouponServiceImpl`/`CouponUsageServiceImpl` open via `REQUIRES_NEW` transactions.
+
+### 5.3. Secrets
+
+Database credentials go into a Kubernetes `Secret` — either created directly, or synced from a cloud secret manager (Azure Key Vault, AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault) via the Secrets Store CSI driver or the External Secrets Operator, both of which work the same way regardless of provider. Credentials are mapped to the `SPRING_DATASOURCE_*` environment variables in the pod spec — never committed to git or written into `application.yml`.
+
+### 5.4. Health checks for orchestration
+
+Implements NFR12 (Recommendations), previously unaddressed. Add `spring-boot-starter-actuator` and enable `management.endpoint.health.probes.enabled=true` for separate `/actuator/health/liveness` and `/actuator/health/readiness` endpoints, with readiness tied to real database connectivity. Without this, Kubernetes can't distinguish a broken pod from a healthy one, and can't safely restart or stop routing to a stuck instance.
+
+### 5.5. Kubernetes manifests, packaged as a Helm chart
+
+None of these exist yet. Rather than raw YAML, package them as a **Helm chart**, templating the pieces that differ per environment (image tag, replica count, resource limits, the Secret/ConfigMap reference) via `values.yaml` — one chart, one `values-dev.yaml`/`values-prod.yaml` per environment:
+
+- **Deployment** — multiple replicas, the container image, env vars sourced from the `Secret`, resource requests/limits, liveness/readiness probes pointing at the actuator endpoints above.
+- **Service** (`ClusterIP`) — routes to the pods on port 8080.
+- **Ingress** (if exposed externally) — TLS via cert-manager.
+- **HorizontalPodAutoscaler** (optional) — scales pod count on CPU/memory.
+
+Deploying or updating the release then becomes one command: `helm upgrade --install coupon-service ./chart -f values-prod.yaml`.
+
+### 5.6. Cloud infrastructure, provisioned with Terraform (outside this repository)
+
+The Kubernetes cluster, the managed Postgres instance, the container registry, and the networking between them are infrastructure, not application config — provisioned with **Terraform** rather than manually through a cloud console, so the setup is reviewable and repeatable:
+
+- A Terraform module per environment declaring the managed Postgres instance, its networking (private access into the same VPC/VNet as the cluster is preferable to public access plus firewall rules, regardless of provider), and the container registry.
+- The provider-specific resource types differ (e.g. `azurerm_postgresql_flexible_server` vs. `aws_db_instance` vs. `google_sql_database_instance`), but the shape of the module — instance, network, registry, output the connection details for the Secret in 5.3 — stays the same across clouds.
+- Registry-to-cluster image pull access configured once at the infrastructure level (e.g. attaching a registry to the cluster's identity), so pods don't need per-deployment `imagePullSecrets`.
+
+### 5.7. CI/CD
+
+None exists yet. Needed for repeatable deployments: build the jar, build and push the image to the container registry, then `terraform apply` for any infrastructure change and `helm upgrade` for the application release.
