@@ -40,7 +40,7 @@ class CouponServiceImpl implements CouponService {
 
     @Override
     public CouponCreationResult createCoupon(String code, Integer maxUses, String country) {
-        validate(code, maxUses, country);
+        validateCoupon(code, maxUses, country);
         String normalizedCode = code.toLowerCase();
         String normalizedCountry = country.toUpperCase();
 
@@ -71,7 +71,7 @@ class CouponServiceImpl implements CouponService {
         return new CouponCreationResult(existing, false);
     }
 
-    private void validate(String code, Integer maxUses, String country) {
+    private void validateCoupon(String code, Integer maxUses, String country) {
         if (code == null || !CODE_PATTERN.matcher(code).matches()) {
             throw new InvalidCouponRequestException(
                     "Coupon code must be 1-64 characters, containing only letters, digits, '-', and '_'");
