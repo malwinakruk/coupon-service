@@ -52,7 +52,8 @@ class CouponUsageServiceImpl implements CouponUsageService {
 
     @Override
     public CouponUsage useCoupon(String code, String userId, String ipAddress) {
-        validate(userId);
+        validateCode(code);
+        validateUserId(userId);
         Coupon coupon =
                 couponRepository.findByCode(code.toLowerCase()).orElseThrow(() -> new CouponNotFoundException(code));
 
@@ -82,13 +83,20 @@ class CouponUsageServiceImpl implements CouponUsageService {
         return usage;
     }
 
+    /** Rejects a missing code before it reaches the lookup, instead of a null-pointer failure. */
+    private void validateCode(String code) {
+        if (code == null || code.isBlank()) {
+            throw new InvalidCouponRequestException("Coupon code must be non-empty");
+        }
+    }
+
     /**
      * Rejects a missing or oversized user ID before it reaches the database — a NOT NULL or
      * length violation on {@code coupon_usage.user_id} would otherwise raise the same exception
      * type the unique-constraint check in {@link #registerUsage} relies on, and get
      * misclassified as an already-used conflict instead of a bad request.
      */
-    private void validate(String userId) {
+    private void validateUserId(String userId) {
         if (userId == null || userId.isBlank() || userId.length() > MAX_USER_ID_LENGTH) {
             throw new InvalidCouponRequestException(
                     "User ID must be non-empty and at most " + MAX_USER_ID_LENGTH + " characters");

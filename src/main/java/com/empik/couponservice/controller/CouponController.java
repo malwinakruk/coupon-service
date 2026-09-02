@@ -14,7 +14,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -55,15 +54,13 @@ class CouponController {
     /**
      * Redeems a coupon for the requesting user, geolocating them from the request's IP address.
      *
-     * @param code coupon code to redeem
-     * @param request the redeeming user's identifier
+     * @param request the coupon code to redeem and the redeeming user's identifier
      * @param httpRequest used to read the caller's IP address
      * @return {@code 200} confirming the usage
      */
     @PostMapping("/redeem")
-    ResponseEntity<CouponUsageResponse> useCoupon(
-            @RequestParam String code, @RequestBody CouponUsageRequest request, HttpServletRequest httpRequest) {
-        CouponUsage usage = couponUsageService.useCoupon(code, request.userId(), httpRequest.getRemoteAddr());
+    ResponseEntity<CouponUsageResponse> useCoupon(@RequestBody CouponUsageRequest request, HttpServletRequest httpRequest) {
+        CouponUsage usage = couponUsageService.useCoupon(request.code(), request.userId(), httpRequest.getRemoteAddr());
         return ResponseEntity.ok(CouponUsageResponse.from(usage));
     }
 }

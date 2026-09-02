@@ -47,6 +47,15 @@ class CouponUsageServiceImplUnitTest {
                 new CouponUsageServiceImpl(couponRepository, couponUsageRepository, geoLocationService, transactionManager);
     }
 
+    /** A missing code is rejected before the lookup, instead of a null-pointer failure. */
+    @Test
+    void rejectsBlankCodeWithoutLookingUpTheCoupon() {
+        assertThatThrownBy(() -> couponUsageService.useCoupon(null, "user-1", "1.2.3.4"))
+                .isInstanceOf(InvalidCouponRequestException.class);
+
+        verifyNoInteractions(couponRepository, geoLocationService);
+    }
+
     /**
      * A missing user ID is rejected before any lookup, instead of failing at the database's
      * NOT NULL constraint and being misread as an already-used conflict.
