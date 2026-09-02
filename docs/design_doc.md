@@ -333,6 +333,55 @@ Needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh,
 
 ---
 
+## 5. Deploying to Kubernetes (Azure)
+
+The service was built stateless from the start (ADR-4, NFR4): every concurrency guarantee lives in Postgres, not in application memory. Running many pods behind the same database needs no code change for correctness — the work below is entirely about packaging, configuration, and infrastructure.
+
+### 5.1. Containerization
+
+Add a multi-stage `Dockerfile`: a Maven build stage producing the fat jar, copied into a slim JRE 24 runtime image (e.g. `eclipse-temurin:24-jre-alpine`). Add a `.dockerignore` (`target/`, `.git/`, etc.) so the build context stays small. `spring-boot-docker-compose` already excludes itself from the packaged jar by design (README), so it needs no special handling for the container image.
+
+### 5.2. Database configuration for Azure Postgres Flexible Server
+
+`application.yml` currently has no `spring.datasource.*` properties — locally, `spring-boot-docker-compose` supplies them, which doesn't exist in the container image. For a real deployment:
+
+- Set `spring.datasource.url/username/password` via environment variables (`SPRING_DATASOURCE_URL`, etc.) — Spring Boot's relaxed binding maps these automatically, no template needed.
+- The JDBC URL needs `?sslmode=require` — Azure Postgres Flexible Server enforces SSL by default.
+- Size `spring.datasource.hikari.maximum-pool-size` against the Flexible Server tier's `max_connections`, accounting for (pool size × pod count) plus the extra short-lived connections `CouponServiceImpl`/`CouponUsageServiceImpl` open via `REQUIRES_NEW` transactions.
+
+### 5.3. Secrets
+
+Database credentials go into a Kubernetes `Secret` (or Azure Key Vault via the CSI driver / External Secrets Operator), mapped to the `SPRING_DATASOURCE_*` environment variables in the pod spec — never in `application.yml` or committed to git.
+
+### 5.4. Health checks for orchestration
+
+Implements NFR12 (Recommendations), previously unaddressed. Add `spring-boot-starter-actuator` and enable `management.endpoint.health.probes.enabled=true` for separate `/actuator/health/liveness` and `/actuator/health/readiness` endpoints, with readiness tied to real database connectivity. Without this, Kubernetes can't distinguish a broken pod from a healthy one, and can't safely restart or stop routing to a stuck instance.
+
+### 5.5. Kubernetes manifests
+
+None of these exist yet:
+
+- **Deployment** — multiple replicas, the container image, env vars sourced from the `Secret`, resource requests/limits, liveness/readiness probes pointing at the actuator endpoints above.
+- **Service** (`ClusterIP`) — routes to the pods on port 8080.
+- **Ingress** (if exposed externally) — TLS via cert-manager.
+- **HorizontalPodAutoscaler** (optional) — scales pod count on CPU/memory.
+
+### 5.6. Azure infrastructure (outside this repository)
+
+- Provision Azure Postgres Flexible Server (Terraform/Bicep/CLI).
+- Prefer VNet-integrated private access between AKS and the Flexible Server over public access plus firewall rules.
+- Push the image to Azure Container Registry; attach ACR to AKS (`az aks update --attach-acr`) so pods don't need `imagePullSecrets`.
+
+### 5.7. CI/CD
+
+None exists yet. Needed for repeatable deployments: build the jar, build and push the image to ACR, then apply the manifests (or a Helm upgrade).
+
+### 5.8. Recommended, not blocking
+
+Relates to NFR9 (Recommendations, logging for traceability), also unaddressed today. With multiple pods, tailing one process's stdout no longer shows the whole story of a request — a correlation/trace ID attached to each request and propagated through logs makes debugging across pods tractable.
+
+---
+
 ## TODO
 
 - **Repo visibility** — `coupon-service` is currently private (temporary, for working on it without it being public yet). The task requires a publicly accessible repo — switch it back to public before sending the link (GitHub → repo Settings → Danger Zone → Change repository visibility → Make public).
