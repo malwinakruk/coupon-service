@@ -110,9 +110,8 @@ class CouponControllerTest {
         when(couponUsageService.useCoupon(eq("golden"), eq("user-1"), any())).thenReturn(usage);
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "golden")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("golden", "user-1"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("golden"))
                 .andExpect(jsonPath("$.userId").value("user-1"));
@@ -124,9 +123,8 @@ class CouponControllerTest {
         when(couponUsageService.useCoupon(any(), any(), any())).thenThrow(new CouponNotFoundException("missing"));
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "missing")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("missing", "user-1"))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("COUPON_NOT_FOUND"));
     }
@@ -138,9 +136,8 @@ class CouponControllerTest {
                 .thenThrow(new GeoLocationUnavailableException("1.2.3.4", null));
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "golden")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("golden", "user-1"))))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.error").value("GEO_UNAVAILABLE"));
     }
@@ -151,9 +148,8 @@ class CouponControllerTest {
         when(couponUsageService.useCoupon(any(), any(), any())).thenThrow(new CountryNotAllowedException("DE", "PL"));
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "golden")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("golden", "user-1"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("COUNTRY_NOT_ALLOWED"));
     }
@@ -165,9 +161,8 @@ class CouponControllerTest {
                 .thenThrow(new CouponAlreadyUsedException("golden", "user-1"));
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "golden")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("golden", "user-1"))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("ALREADY_USED"));
     }
@@ -179,9 +174,8 @@ class CouponControllerTest {
                 .thenThrow(new CouponUsageLimitReachedException("golden"));
 
         mockMvc.perform(post("/coupons/redeem")
-                        .param("code", "golden")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UsageRequest("user-1"))))
+                        .content(objectMapper.writeValueAsString(new UsageRequest("golden", "user-1"))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("LIMIT_REACHED"));
     }
@@ -189,6 +183,6 @@ class CouponControllerTest {
     private record CreationRequest(String code, Integer maxUses, String country) {
     }
 
-    private record UsageRequest(String userId) {
+    private record UsageRequest(String code, String userId) {
     }
 }

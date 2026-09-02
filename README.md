@@ -121,9 +121,9 @@ request retried:
 ### Redeem a coupon
 
 ```
-curl -X POST 'localhost:8080/coupons/redeem?code=summer' \
+curl -X POST localhost:8080/coupons/redeem \
   -H 'Content-Type: application/json' \
-  -d '{"userId":"user-1"}'
+  -d '{"code":"summer","userId":"user-1"}'
 ```
 
 Returns `200` confirming the usage:
