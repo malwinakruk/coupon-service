@@ -44,10 +44,10 @@ class CouponServiceImpl implements CouponService {
 
     @Override
     public CouponCreationResult createCoupon(String code, Integer maxUses, String country) {
+        LOG.debug("Create attempt code={} maxUses={} country={}", code, maxUses, country);
         validateCoupon(code, maxUses, country);
         String normalizedCode = code.toLowerCase();
         String normalizedCountry = country.toUpperCase();
-        LOG.debug("Creating coupon code={} maxUses={} country={}", normalizedCode, maxUses, normalizedCountry);
 
         try {
             Coupon coupon = insertTransaction.execute(

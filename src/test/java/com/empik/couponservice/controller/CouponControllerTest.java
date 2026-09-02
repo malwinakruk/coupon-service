@@ -90,6 +90,33 @@ class CouponControllerTest {
                 .andExpect(jsonPath("$.message").value("bad code"));
     }
 
+    /** A malformed JSON body maps to 400 INVALID_REQUEST, not the framework's default error shape. */
+    @Test
+    void malformedBodyReturnsInvalidRequest() throws Exception {
+        mockMvc.perform(post("/coupons").contentType(MediaType.APPLICATION_JSON).content("{not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("Request body is missing or malformed"));
+    }
+
+    /** A field of the wrong JSON type maps to 400 INVALID_REQUEST. */
+    @Test
+    void wrongTypeFieldReturnsInvalidRequest() throws Exception {
+        mockMvc.perform(post("/coupons")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"x\",\"maxUses\":\"abc\",\"country\":\"PL\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_REQUEST"));
+    }
+
+    /** A missing request body maps to 400 INVALID_REQUEST. */
+    @Test
+    void missingBodyReturnsInvalidRequest() throws Exception {
+        mockMvc.perform(post("/coupons").contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_REQUEST"));
+    }
+
     /** Variant C: a genuine conflict surfaces as 409 with the CODE_ALREADY_EXISTS error code. */
     @Test
     void conflictReturnsConflict() throws Exception {

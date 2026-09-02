@@ -57,13 +57,13 @@ class CouponUsageServiceImpl implements CouponUsageService {
 
     @Override
     public CouponUsage useCoupon(String code, String userId, String ipAddress) {
+        LOG.debug("Redeem attempt code={} userId={} ipAddress={}", code, userId, ipAddress);
         validateCode(code);
         validateUserId(userId);
-        LOG.debug("Redeem attempt code={} userId={} ipAddress={}", code, userId, ipAddress);
 
         Optional<Coupon> maybeCoupon = couponRepository.findByCode(code.toLowerCase());
         if (maybeCoupon.isEmpty()) {
-            LOG.debug("No coupon found for code={}", code);
+            LOG.warn("No coupon found for code={}", code);
             throw new CouponNotFoundException(code);
         }
         Coupon coupon = maybeCoupon.get();
@@ -78,7 +78,10 @@ class CouponUsageServiceImpl implements CouponUsageService {
             throw new CountryNotAllowedException(userCountry, coupon.getCountry());
         }
 
-        return usageTransaction.execute(status -> registerUsage(coupon, userId));
+        CouponUsage usage = usageTransaction.execute(status -> registerUsage(coupon, userId));
+        // Logged only after the transaction commits, so a commit failure can't leave a false success line.
+        LOG.info("Coupon {} used by user {}", coupon.getCode(), userId);
+        return usage;
     }
 
     /**
@@ -98,7 +101,6 @@ class CouponUsageServiceImpl implements CouponUsageService {
             LOG.warn("Coupon {} usage limit reached, rejecting user {}", coupon.getCode(), userId);
             throw new CouponUsageLimitReachedException(coupon.getCode());
         }
-        LOG.info("Coupon {} used by user {}", coupon.getCode(), userId);
         return usage;
     }
 

@@ -73,6 +73,18 @@ class CouponServiceImplUnitTest {
         verify(couponRepository, never()).saveAndFlush(any());
     }
 
+    /** Boundary: a code exactly at the 64-character column limit is accepted. */
+    @Test
+    void acceptsCodeAtTheColumnLimit() {
+        when(couponRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        String maxLength = "a".repeat(64);
+
+        CouponCreationResult result = couponService.createCoupon(maxLength, 5, "PL");
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.coupon().getCode()).isEqualTo(maxLength);
+    }
+
     /** ADR-6: the code and country are normalized before being saved. */
     @Test
     void normalizesCodeAndCountryBeforeSaving() {

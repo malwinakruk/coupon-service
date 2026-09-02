@@ -25,7 +25,7 @@ class GeoLocationConfig {
      * @return a {@code RestClient} configured for the geolocation provider
      */
     @Bean
-    RestClient restClient() {
+    RestClient geoLocationRestClient() {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(CONNECT_TIMEOUT);
         requestFactory.setReadTimeout(READ_TIMEOUT);

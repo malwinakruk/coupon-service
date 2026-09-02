@@ -2,7 +2,9 @@
 <Configuration status="WARN">
     <Appenders>
         <Console name="Console" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"/>
+            <!-- %enc{...}{CRLF} escapes newlines in the message, so user-supplied values (coupon
+                 code, user ID) can't forge extra log lines by embedding line breaks. -->
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %enc{%msg}{CRLF}%n"/>
         </Console>
     </Appenders>
     <Loggers>

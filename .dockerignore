@@ -1,5 +1,7 @@
 target/*
 !target/*.jar
+src/
+pom.xml
 .git/
 .idea/
 *.iml

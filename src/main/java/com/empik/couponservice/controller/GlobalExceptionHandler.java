@@ -8,8 +8,11 @@ import com.empik.couponservice.exception.CouponNotFoundException;
 import com.empik.couponservice.exception.CouponUsageLimitReachedException;
 import com.empik.couponservice.exception.GeoLocationUnavailableException;
 import com.empik.couponservice.exception.InvalidCouponRequestException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -20,15 +23,36 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 class GlobalExceptionHandler {
 
+    private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     /**
-     * Handles invalid request input, whether creating or redeeming a coupon.
+     * Handles invalid request input, whether creating or redeeming a coupon. This handler logs
+     * the denial itself — the validation code that throws it doesn't, unlike the other business
+     * failures, which are already logged where they're detected.
      *
      * @param exception the validation failure
      * @return {@code 400} with error code {@code INVALID_REQUEST}
      */
     @ExceptionHandler(InvalidCouponRequestException.class)
     ResponseEntity<ErrorResponse> handleInvalidRequest(InvalidCouponRequestException exception) {
+        LOG.warn("Request rejected: {}", exception.getMessage());
         return ResponseEntity.badRequest().body(new ErrorResponse("INVALID_REQUEST", exception.getMessage()));
+    }
+
+    /**
+     * Handles a request body that can't be read at all — missing, malformed JSON, or a field of
+     * the wrong type — so even these rejections carry the API's machine-readable error shape
+     * instead of the framework's default error body. The response message is fixed rather than
+     * the exception's own, which would leak parser and framework internals to the caller.
+     *
+     * @param exception the body-parsing failure
+     * @return {@code 400} with error code {@code INVALID_REQUEST}
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<ErrorResponse> handleUnreadableBody(HttpMessageNotReadableException exception) {
+        LOG.warn("Request rejected, unreadable body: {}", exception.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse("INVALID_REQUEST", "Request body is missing or malformed"));
     }
 
     /**

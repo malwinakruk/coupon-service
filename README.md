@@ -69,7 +69,7 @@ The service only has two application properties, set in `src/main/resources/appl
 
 | Property | Purpose |
 |---|---|
-| `spring.application.name` | Service name, used in logs |
+| `spring.application.name` | Service name (standard Spring Boot identifier) |
 | `spring.jpa.open-in-view` | Disabled — the persistence context doesn't stay open for the view layer |
 
 Database connection details aren't set explicitly: `spring-boot-docker-compose` auto-starts

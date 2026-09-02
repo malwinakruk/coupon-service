@@ -70,6 +70,17 @@ class CouponUsageServiceImplTest {
                 .isEqualTo(1);
     }
 
+    /** The submitted code is matched case-insensitively against the stored lowercase code. */
+    @Test
+    void redeemsWithDifferentCasing() {
+        Coupon coupon = couponRepository.saveAndFlush(new Coupon("mixedcase", 5, "PL"));
+        when(geoLocationService.lookupCountry("1.2.3.4")).thenReturn("PL");
+
+        CouponUsage usage = couponUsageService.useCoupon("MIXEDCASE", "user-1", "1.2.3.4");
+
+        assertThat(usage.getCoupon().getId()).isEqualTo(coupon.getId());
+    }
+
     /** Variant B: an unknown code is rejected before any geolocation call is made. */
     @Test
     void missingCouponThrows() {
