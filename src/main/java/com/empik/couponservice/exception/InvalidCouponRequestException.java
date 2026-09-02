@@ -1,8 +1,8 @@
 package com.empik.couponservice.exception;
 
 /**
- * Thrown when a coupon-creation request fails input validation (code format, usage limit,
- * or country format).
+ * Thrown when a request to create or redeem a coupon fails input validation (code format,
+ * usage limit, country format, or user ID).
  */
 public class InvalidCouponRequestException extends RuntimeException {
 

@@ -7,6 +7,7 @@ import com.empik.couponservice.exception.CountryNotAllowedException;
 import com.empik.couponservice.exception.CouponAlreadyUsedException;
 import com.empik.couponservice.exception.CouponNotFoundException;
 import com.empik.couponservice.exception.CouponUsageLimitReachedException;
+import com.empik.couponservice.exception.InvalidCouponRequestException;
 import com.empik.couponservice.repository.CouponRepository;
 import com.empik.couponservice.repository.CouponUsageRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -19,6 +20,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Service
 class CouponUsageServiceImpl implements CouponUsageService {
+
+    private static final int MAX_USER_ID_LENGTH = 255;
 
     private final CouponRepository couponRepository;
     private final CouponUsageRepository couponUsageRepository;
@@ -49,6 +52,7 @@ class CouponUsageServiceImpl implements CouponUsageService {
 
     @Override
     public CouponUsage useCoupon(String code, String userId, String ipAddress) {
+        validate(userId);
         Coupon coupon =
                 couponRepository.findByCode(code.toLowerCase()).orElseThrow(() -> new CouponNotFoundException(code));
 
@@ -76,5 +80,18 @@ class CouponUsageServiceImpl implements CouponUsageService {
             throw new CouponUsageLimitReachedException(coupon.getCode());
         }
         return usage;
+    }
+
+    /**
+     * Rejects a missing or oversized user ID before it reaches the database — a NOT NULL or
+     * length violation on {@code coupon_usage.user_id} would otherwise raise the same exception
+     * type the unique-constraint check in {@link #registerUsage} relies on, and get
+     * misclassified as an already-used conflict instead of a bad request.
+     */
+    private void validate(String userId) {
+        if (userId == null || userId.isBlank() || userId.length() > MAX_USER_ID_LENGTH) {
+            throw new InvalidCouponRequestException(
+                    "User ID must be non-empty and at most " + MAX_USER_ID_LENGTH + " characters");
+        }
     }
 }
