@@ -21,9 +21,9 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
     Optional<Coupon> findByCode(String code);
 
     /**
-     * Atomically increments {@code currentUses} if and only if the coupon is still under its
-     * limit — the exact same statement Hibernate's normal load-then-save flow cannot express
-     * (ADR-4, ADR-5). Bypasses the entity's in-memory state entirely.
+     * Atomically increments {@code currentUses} if the coupon is still under its limit —
+     * bypasses the entity's normal load-then-save flow, which would otherwise re-check a value
+     * already read into memory and let concurrent requests push the count past the limit.
      *
      * @param id the coupon to increment
      * @return 1 if the increment applied, 0 if the coupon was already at its usage limit

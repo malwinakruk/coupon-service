@@ -12,7 +12,9 @@ import java.time.OffsetDateTime;
  * A coupon: a code, a usage limit, and a country restriction.
  *
  * <p>{@code currentUses} has no setter — it is only ever changed via the atomic
- * {@code UPDATE ... WHERE} in the repository layer (ADR-5), never through this entity.
+ * {@code UPDATE ... WHERE} in the repository layer, never through this entity. Loading the
+ * value into memory and saving it back would reopen the exact race condition that mechanism
+ * exists to close.
  */
 @Entity
 @Table(name = "coupons")
@@ -56,56 +58,32 @@ public class Coupon {
         this.country = country;
     }
 
-    /**
-     * Returns the surrogate identifier.
-     *
-     * @return the identifier
-     */
+    /** @return the surrogate identifier */
     public Long getId() {
         return id;
     }
 
-    /**
-     * Returns the lowercase-normalized coupon code.
-     *
-     * @return the code
-     */
+    /** @return the lowercase-normalized coupon code */
     public String getCode() {
         return code;
     }
 
-    /**
-     * Returns when the coupon was created.
-     *
-     * @return the creation timestamp
-     */
+    /** @return when the coupon was created */
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
 
-    /**
-     * Returns the maximum number of allowed uses.
-     *
-     * @return the usage limit
-     */
+    /** @return the maximum number of allowed uses */
     public Integer getMaxUses() {
         return maxUses;
     }
 
-    /**
-     * Returns the current number of uses.
-     *
-     * @return the running usage count
-     */
+    /** @return the current number of uses */
     public Integer getCurrentUses() {
         return currentUses;
     }
 
-    /**
-     * Returns the country this coupon is restricted to.
-     *
-     * @return the ISO 3166-1 alpha-2 country code
-     */
+    /** @return the ISO 3166-1 alpha-2 country this coupon is restricted to */
     public String getCountry() {
         return country;
     }

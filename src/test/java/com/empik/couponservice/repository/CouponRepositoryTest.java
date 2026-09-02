@@ -48,7 +48,10 @@ class CouponRepositoryTest {
         assertThat(couponRepository.findById(coupon.getId()).orElseThrow().getCurrentUses()).isEqualTo(1);
     }
 
-    /** Incrementing a coupon already at its limit changes nothing and reports zero rows (NFR1). */
+    /**
+     * Incrementing a coupon already at its limit changes nothing and reports zero rows, so the
+     * caller can tell a real update from a no-op.
+     */
     @Test
     void incrementFailsAtLimit() {
         Coupon coupon = new Coupon("atlimit", 1, "PL");

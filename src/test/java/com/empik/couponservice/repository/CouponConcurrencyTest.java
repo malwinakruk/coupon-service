@@ -24,9 +24,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Verifies ADR-4's atomic concurrency mechanism (4.1.3): under concurrent load on the same
- * coupon, exactly {@code max_uses} increments succeed and the rest are rejected — never more.
- * Real Postgres (Testcontainers), real concurrent threads, real committed transactions.
+ * Verifies that under concurrent load on the same coupon, exactly {@code max_uses} increments
+ * succeed and the rest are rejected — never more, no matter how many requests race for the last
+ * available use. Real Postgres (Testcontainers), real concurrent threads, real committed
+ * transactions.
  */
 @DataJpaTest(properties = "spring.datasource.hikari.maximum-pool-size=20")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -45,7 +46,8 @@ class CouponConcurrencyTest {
 
     /**
      * Fires more concurrent increment attempts than the coupon's limit allows; asserts exactly
-     * {@code maxUses} succeed and the stored count never exceeds it (NFR1).
+     * {@code maxUses} succeed and the stored count never exceeds it — a coupon that allows even
+     * one extra use has failed its entire purpose.
      *
      * <p>Runs outside the test's default transaction ({@code Propagation.NOT_SUPPORTED}) so each
      * thread commits its own transaction — real cross-thread visibility, not one shared connection.
