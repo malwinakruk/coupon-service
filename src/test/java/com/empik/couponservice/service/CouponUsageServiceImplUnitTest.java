@@ -79,6 +79,21 @@ class CouponUsageServiceImplUnitTest {
         verifyNoInteractions(couponRepository, geoLocationService);
     }
 
+    /** Boundary: a user ID exactly at the 255-character column limit is accepted. */
+    @Test
+    void acceptsUserIdAtTheColumnLimit() {
+        Coupon coupon = new Coupon("golden", 5, "PL");
+        String maxLength = "u".repeat(255);
+        when(couponRepository.findByCode("golden")).thenReturn(Optional.of(coupon));
+        when(geoLocationService.lookupCountry("1.2.3.4")).thenReturn("PL");
+        when(couponUsageRepository.saveAndFlush(any())).thenReturn(new CouponUsage(coupon, maxLength));
+        when(couponRepository.incrementUsageIfUnderLimit(any())).thenReturn(1);
+
+        CouponUsage result = couponUsageService.useCoupon("golden", maxLength, "1.2.3.4");
+
+        assertThat(result.getUserId()).isEqualTo(maxLength);
+    }
+
     /** Variant B: an unknown code is rejected before any geolocation call, using the normalized code. */
     @Test
     void missingCouponShortCircuitsBeforeGeoLocation() {

@@ -264,7 +264,9 @@ The insert runs first, so a repeat request from a user who already redeemed fail
 2. **Status code plus a stable, machine-readable error code — chosen, see Decision** in the response body (e.g. `{"error": "LIMIT_REACHED"}`), alongside a human-readable message.
 3. A human-readable message only, no machine-readable code. Bad for any automated client — wording can change and silently break anything parsing the message text.
 
-**Decision:** option 2. Every error response carries both the HTTP status already assigned per variant across UC1/UC2 (`400`, `403`, `404`, `409`, `429`, `503`) and the exact error-code strings already used throughout this document (`INVALID_REQUEST`, `CODE_ALREADY_EXISTS`, `COUPON_NOT_FOUND`, `GEO_UNAVAILABLE`, `COUNTRY_NOT_ALLOWED`, `ALREADY_USED`, `LIMIT_REACHED`, `RATE_LIMITED`) — no new names are introduced here, this ADR just formalizes the shape of the response body around names the use cases already fixed. It's the only option that lets a program reliably tell two different failures apart even when they share the same status code, without depending on message text that could change.
+**Decision:** option 2. Every error response carries both the HTTP status already assigned per variant across UC1/UC2 (`400`, `403`, `404`, `409`, `503`, plus `429` once rate limiting exists) and the exact error-code strings already used throughout this document (`INVALID_REQUEST`, `CODE_ALREADY_EXISTS`, `COUPON_NOT_FOUND`, `GEO_UNAVAILABLE`, `COUNTRY_NOT_ALLOWED`, `ALREADY_USED`, `LIMIT_REACHED`, and `RATE_LIMITED` — reserved for NFR8's rate limiting, not implemented yet) — no new names are introduced here, this ADR just formalizes the shape of the response body around names the use cases already fixed. It's the only option that lets a program reliably tell two different failures apart even when they share the same status code, without depending on message text that could change.
+
+A request body the framework can't read at all (missing, malformed JSON, a field of the wrong type) also maps to `400 INVALID_REQUEST` — it's the same "your input is unusable" failure from the caller's perspective. Rejections produced before the request reaches the application's own handling (e.g. `415` for an unsupported media type) keep the framework's default error body; the machine-readable codes cover what the service itself decides.
 
 ---
 
@@ -278,7 +280,7 @@ Organized by test scope. Concurrency, geolocation adapter, and idempotency-under
 
 #### 4.1.1: Unit tests
 
-Pure business logic, `GeoLocationService` and repositories mocked; no Spring context. Covers: input validation and character-set restriction (UC1 Variant B, NFR7 — also the SQL-injection defense for the coupon code), code normalization (ADR-6), idempotency comparison logic (UC1 Variant C vs D), and HTTP error-model consistency across all 8 error codes from ADR-8 (NFR6, via a `@WebMvcTest` slice), including `RATE_LIMITED`'s response shape (mechanism not yet designed — see Recommendations). *JUnit 5 + Mockito.*
+Pure business logic, `GeoLocationService` and repositories mocked; no Spring context. Covers: input validation and character-set restriction (UC1 Variant B, NFR7 — also the SQL-injection defense for the coupon code), code normalization (ADR-6), idempotency comparison logic (UC1 Variant C vs D), and HTTP error-model consistency across the error codes from ADR-8 (NFR6 — via a `@WebMvcTest` slice, the one part of this tier that does use a Spring context; `RATE_LIMITED`'s response shape stays untested until NFR8's mechanism exists). *JUnit 5 + Mockito.*
 
 **Additional approach:** property-based testing (jqwik) generates randomized inputs against the validation logic; mutation testing (PIT) breaks the production code to check the suite catches it. Both audit existing coverage rather than add new cases.
 

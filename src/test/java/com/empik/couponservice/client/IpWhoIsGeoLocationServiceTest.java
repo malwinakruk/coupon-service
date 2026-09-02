@@ -87,7 +87,7 @@ class IpWhoIsGeoLocationServiceTest {
     static class TestConfig {
 
         @Bean
-        RestClient restClient() {
+        RestClient geoLocationRestClient() {
             SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
             requestFactory.setConnectTimeout(Duration.ofSeconds(2));
             requestFactory.setReadTimeout(Duration.ofSeconds(2));
