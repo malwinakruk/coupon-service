@@ -49,6 +49,11 @@ The service itself was then built incrementally, one layer or use case per branc
 repositories → service → controller for UC1, then the same for UC2), each verified against a real
 Postgres instance before merging.
 
+Not everything in the design doc is implemented. The optional extensions and the recommendations
+section are explicitly out of the task's required scope. On top of that, given the tight schedule,
+a few test-strategy items (the E2E layer, the same-user concurrency test, and the property-based/
+mutation/contract-testing extras) were documented but not yet written.
+
 ## Installation
 
 ### Prerequisites
