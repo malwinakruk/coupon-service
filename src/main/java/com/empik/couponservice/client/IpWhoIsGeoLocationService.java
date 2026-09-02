@@ -1,6 +1,8 @@
 package com.empik.couponservice.client;
 
 import com.empik.couponservice.exception.GeoLocationUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -9,6 +11,8 @@ import org.springframework.web.client.RestClientException;
  */
 @Service
 class IpWhoIsGeoLocationService implements GeoLocationService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(IpWhoIsGeoLocationService.class);
 
     private final IpWhoIsClient client;
 
@@ -27,12 +31,15 @@ class IpWhoIsGeoLocationService implements GeoLocationService {
         try {
             response = client.fetchLocation(ipAddress);
         } catch (RestClientException e) {
+            LOG.warn("Geolocation lookup failed for IP {}: {}", ipAddress, e.getMessage());
             throw new GeoLocationUnavailableException(ipAddress, e);
         }
 
         if (response == null || !response.success() || response.countryCode() == null) {
+            LOG.warn("Geolocation lookup returned an unusable response for IP {}", ipAddress);
             throw new GeoLocationUnavailableException(ipAddress, null);
         }
+        LOG.debug("Resolved IP {} to country {}", ipAddress, response.countryCode());
         return response.countryCode();
     }
 }

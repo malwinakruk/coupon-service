@@ -1,5 +1,7 @@
 package com.empik.couponservice.client;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.resilience.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -13,6 +15,8 @@ import org.springframework.web.client.RestClientException;
  */
 @Component
 class IpWhoIsClient {
+
+    private static final Logger LOG = LoggerFactory.getLogger(IpWhoIsClient.class);
 
     private final RestClient restClient;
 
@@ -35,6 +39,7 @@ class IpWhoIsClient {
      */
     @Retryable(value = RestClientException.class, maxRetries = 2, delay = 200, multiplier = 2.0)
     IpWhoIsResponse fetchLocation(String ipAddress) {
+        LOG.debug("Calling ipwho.is for IP {}", ipAddress);
         return restClient.get().uri("/{ip}", ipAddress).retrieve().body(IpWhoIsResponse.class);
     }
 }

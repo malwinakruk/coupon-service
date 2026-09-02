@@ -5,6 +5,8 @@ import com.empik.couponservice.exception.CouponCodeConflictException;
 import com.empik.couponservice.exception.InvalidCouponRequestException;
 import com.empik.couponservice.repository.CouponRepository;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -16,6 +18,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Service
 class CouponServiceImpl implements CouponService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CouponServiceImpl.class);
 
     private static final Pattern CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
     private static final Pattern COUNTRY_PATTERN = Pattern.compile("^[A-Za-z]{2}$");
@@ -43,10 +47,12 @@ class CouponServiceImpl implements CouponService {
         validateCoupon(code, maxUses, country);
         String normalizedCode = code.toLowerCase();
         String normalizedCountry = country.toUpperCase();
+        LOG.debug("Creating coupon code={} maxUses={} country={}", normalizedCode, maxUses, normalizedCountry);
 
         try {
             Coupon coupon = insertTransaction.execute(
                     status -> couponRepository.saveAndFlush(new Coupon(normalizedCode, maxUses, normalizedCountry)));
+            LOG.info("Created coupon code={} maxUses={} country={}", normalizedCode, maxUses, normalizedCountry);
             return new CouponCreationResult(coupon, true);
         } catch (DataIntegrityViolationException e) {
             return handleCodeConflict(normalizedCode, maxUses, normalizedCountry);
@@ -66,8 +72,10 @@ class CouponServiceImpl implements CouponService {
         boolean sameRequest =
                 existing.getMaxUses().equals(maxUses) && existing.getCountry().equals(normalizedCountry);
         if (!sameRequest) {
+            LOG.warn("Coupon code {} already exists with different data", normalizedCode);
             throw new CouponCodeConflictException(normalizedCode);
         }
+        LOG.info("Coupon code {} already exists with identical data, treating as idempotent retry", normalizedCode);
         return new CouponCreationResult(existing, false);
     }
 

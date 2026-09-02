@@ -10,6 +10,9 @@ import com.empik.couponservice.exception.CouponUsageLimitReachedException;
 import com.empik.couponservice.exception.InvalidCouponRequestException;
 import com.empik.couponservice.repository.CouponRepository;
 import com.empik.couponservice.repository.CouponUsageRepository;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -20,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Service
 class CouponUsageServiceImpl implements CouponUsageService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CouponUsageServiceImpl.class);
 
     private static final int MAX_USER_ID_LENGTH = 255;
 
@@ -54,11 +59,22 @@ class CouponUsageServiceImpl implements CouponUsageService {
     public CouponUsage useCoupon(String code, String userId, String ipAddress) {
         validateCode(code);
         validateUserId(userId);
-        Coupon coupon =
-                couponRepository.findByCode(code.toLowerCase()).orElseThrow(() -> new CouponNotFoundException(code));
+        LOG.debug("Redeem attempt code={} userId={} ipAddress={}", code, userId, ipAddress);
+
+        Optional<Coupon> maybeCoupon = couponRepository.findByCode(code.toLowerCase());
+        if (maybeCoupon.isEmpty()) {
+            LOG.debug("No coupon found for code={}", code);
+            throw new CouponNotFoundException(code);
+        }
+        Coupon coupon = maybeCoupon.get();
 
         String userCountry = geoLocationService.lookupCountry(ipAddress);
         if (!userCountry.equals(coupon.getCountry())) {
+            LOG.warn(
+                    "Coupon {} rejected: user country {} does not match coupon country {}",
+                    coupon.getCode(),
+                    userCountry,
+                    coupon.getCountry());
             throw new CountryNotAllowedException(userCountry, coupon.getCountry());
         }
 
@@ -74,12 +90,15 @@ class CouponUsageServiceImpl implements CouponUsageService {
         try {
             usage = couponUsageRepository.saveAndFlush(new CouponUsage(coupon, userId));
         } catch (DataIntegrityViolationException e) {
+            LOG.warn("Coupon {} already used by user {}", coupon.getCode(), userId);
             throw new CouponAlreadyUsedException(coupon.getCode(), userId);
         }
 
         if (couponRepository.incrementUsageIfUnderLimit(coupon.getId()) == 0) {
+            LOG.warn("Coupon {} usage limit reached, rejecting user {}", coupon.getCode(), userId);
             throw new CouponUsageLimitReachedException(coupon.getCode());
         }
+        LOG.info("Coupon {} used by user {}", coupon.getCode(), userId);
         return usage;
     }
 
