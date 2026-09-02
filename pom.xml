@@ -21,7 +21,6 @@
 
     <properties>
         <java.version>24</java.version>
-        <archunit.version>1.5.0</archunit.version>
         <mockserver.version>7.6.0</mockserver.version>
     </properties>
 
@@ -52,12 +51,6 @@
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
-        </dependency>
-
-        <!-- Input validation: NFR7 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
         <!-- Local dev: auto-starts docker-compose.yml's Postgres and wires the datasource -->
@@ -103,12 +96,6 @@
             <groupId>org.mock-server</groupId>
             <artifactId>mockserver-junit-jupiter</artifactId>
             <version>${mockserver.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.tngtech.archunit</groupId>
-            <artifactId>archunit-junit5</artifactId>
-            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

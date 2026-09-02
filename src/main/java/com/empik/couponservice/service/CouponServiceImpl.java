@@ -17,7 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 class CouponServiceImpl implements CouponService {
 
-    private static final Pattern CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]+$");
+    private static final Pattern CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
     private static final Pattern COUNTRY_PATTERN = Pattern.compile("^[A-Za-z]{2}$");
 
     private final CouponRepository couponRepository;
@@ -74,7 +74,7 @@ class CouponServiceImpl implements CouponService {
     private void validate(String code, Integer maxUses, String country) {
         if (code == null || !CODE_PATTERN.matcher(code).matches()) {
             throw new InvalidCouponRequestException(
-                    "Coupon code must be non-empty and contain only letters, digits, '-', and '_'");
+                    "Coupon code must be 1-64 characters, containing only letters, digits, '-', and '_'");
         }
         if (maxUses == null || maxUses <= 0) {
             throw new InvalidCouponRequestException("Maximum number of uses must be greater than zero");

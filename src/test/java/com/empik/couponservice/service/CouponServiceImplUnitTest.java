@@ -59,6 +59,20 @@ class CouponServiceImplUnitTest {
                 .isInstanceOf(InvalidCouponRequestException.class);
     }
 
+    /**
+     * Variant B: a code longer than the database column allows is rejected before the insert
+     * attempt, instead of failing at the database and being misread as a code conflict.
+     */
+    @Test
+    void rejectsCodeLongerThanTheColumnLimit() {
+        String tooLong = "a".repeat(65);
+
+        assertThatThrownBy(() -> couponService.createCoupon(tooLong, 5, "PL"))
+                .isInstanceOf(InvalidCouponRequestException.class);
+
+        verify(couponRepository, never()).saveAndFlush(any());
+    }
+
     /** ADR-6: the code and country are normalized before being saved. */
     @Test
     void normalizesCodeAndCountryBeforeSaving() {

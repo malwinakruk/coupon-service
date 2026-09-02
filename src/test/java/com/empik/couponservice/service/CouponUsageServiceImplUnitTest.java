@@ -16,6 +16,7 @@ import com.empik.couponservice.exception.CountryNotAllowedException;
 import com.empik.couponservice.exception.CouponAlreadyUsedException;
 import com.empik.couponservice.exception.CouponNotFoundException;
 import com.empik.couponservice.exception.CouponUsageLimitReachedException;
+import com.empik.couponservice.exception.InvalidCouponRequestException;
 import com.empik.couponservice.repository.CouponRepository;
 import com.empik.couponservice.repository.CouponUsageRepository;
 import java.util.Optional;
@@ -44,6 +45,29 @@ class CouponUsageServiceImplUnitTest {
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         couponUsageService =
                 new CouponUsageServiceImpl(couponRepository, couponUsageRepository, geoLocationService, transactionManager);
+    }
+
+    /**
+     * A missing user ID is rejected before any lookup, instead of failing at the database's
+     * NOT NULL constraint and being misread as an already-used conflict.
+     */
+    @Test
+    void rejectsBlankUserIdWithoutLookingUpTheCoupon() {
+        assertThatThrownBy(() -> couponUsageService.useCoupon("golden", "  ", "1.2.3.4"))
+                .isInstanceOf(InvalidCouponRequestException.class);
+
+        verifyNoInteractions(couponRepository, geoLocationService);
+    }
+
+    /** A user ID longer than the database column allows is rejected before any lookup. */
+    @Test
+    void rejectsUserIdLongerThanTheColumnLimit() {
+        String tooLong = "a".repeat(256);
+
+        assertThatThrownBy(() -> couponUsageService.useCoupon("golden", tooLong, "1.2.3.4"))
+                .isInstanceOf(InvalidCouponRequestException.class);
+
+        verifyNoInteractions(couponRepository, geoLocationService);
     }
 
     /** Variant B: an unknown code is rejected before any geolocation call, using the normalized code. */

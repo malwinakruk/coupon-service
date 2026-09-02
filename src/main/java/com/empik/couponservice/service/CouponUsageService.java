@@ -6,6 +6,7 @@ import com.empik.couponservice.exception.CouponAlreadyUsedException;
 import com.empik.couponservice.exception.CouponNotFoundException;
 import com.empik.couponservice.exception.CouponUsageLimitReachedException;
 import com.empik.couponservice.exception.GeoLocationUnavailableException;
+import com.empik.couponservice.exception.InvalidCouponRequestException;
 
 /**
  * Business logic for redeeming coupons.
@@ -20,6 +21,7 @@ public interface CouponUsageService {
      * @param userId identifier of the user redeeming the coupon
      * @param ipAddress IP address the request came from, used to geolocate the user
      * @return the recorded usage
+     * @throws InvalidCouponRequestException if the user ID is missing or too long
      * @throws CouponNotFoundException if no coupon exists for the given code
      * @throws GeoLocationUnavailableException if the user's country can't be determined
      * @throws CountryNotAllowedException if the user's country doesn't match the coupon's

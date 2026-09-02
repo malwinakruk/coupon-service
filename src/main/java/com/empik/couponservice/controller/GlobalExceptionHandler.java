@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 class GlobalExceptionHandler {
 
     /**
-     * Handles invalid coupon-creation input.
+     * Handles invalid request input, whether creating or redeeming a coupon.
      *
      * @param exception the validation failure
      * @return {@code 400} with error code {@code INVALID_REQUEST}
