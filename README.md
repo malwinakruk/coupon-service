@@ -33,7 +33,7 @@ Two use cases:
 
 Stack: Java 24, Spring Boot 4 (Web MVC, Spring Data JPA), PostgreSQL, Flyway for schema migrations,
 `RestClient` + Spring's native `@Retryable` for the geolocation adapter (calls
-[ipwho.is](https://ipwho.is)).
+[ipwho.is](https://ipwho.is)), Log4j2 for logging.
 
 ### Design doc
 
