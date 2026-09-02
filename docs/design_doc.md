@@ -333,48 +333,52 @@ Needs real multi-instance infrastructure and non-JUnit tooling (e.g. Chaos Mesh,
 
 ---
 
-## 5. Deploying to Kubernetes (Azure)
+## 5. Deploying to Kubernetes
 
-The service was built stateless from the start (ADR-4, NFR4): every concurrency guarantee lives in Postgres, not in application memory. Running many pods behind the same database needs no code change for correctness — the work below is entirely about packaging, configuration, and infrastructure.
+The service was built stateless from the start (ADR-4, NFR4): every concurrency guarantee lives in Postgres, not in application memory. Running many pods behind the same database needs no code change for correctness — the work below is entirely about packaging, configuration, and infrastructure. None of it is tied to a specific cloud provider; where a concrete example is useful, Azure is used only as one illustration, not a requirement.
 
 ### 5.1. Containerization
 
 Add a multi-stage `Dockerfile`: a Maven build stage producing the fat jar, copied into a slim JRE 24 runtime image (e.g. `eclipse-temurin:24-jre-alpine`). Add a `.dockerignore` (`target/`, `.git/`, etc.) so the build context stays small. `spring-boot-docker-compose` already excludes itself from the packaged jar by design (README), so it needs no special handling for the container image.
 
-### 5.2. Database configuration for Azure Postgres Flexible Server
+### 5.2. Database configuration for a managed Postgres instance
 
-`application.yml` currently has no `spring.datasource.*` properties — locally, `spring-boot-docker-compose` supplies them, which doesn't exist in the container image. For a real deployment:
+`application.yml` currently has no `spring.datasource.*` properties — locally, `spring-boot-docker-compose` supplies them, which doesn't exist in the container image. For a real deployment, against any managed Postgres offering (Azure Postgres Flexible Server, AWS RDS, GCP Cloud SQL, self-hosted):
 
 - Set `spring.datasource.url/username/password` via environment variables (`SPRING_DATASOURCE_URL`, etc.) — Spring Boot's relaxed binding maps these automatically, no template needed.
-- The JDBC URL needs `?sslmode=require` — Azure Postgres Flexible Server enforces SSL by default.
-- Size `spring.datasource.hikari.maximum-pool-size` against the Flexible Server tier's `max_connections`, accounting for (pool size × pod count) plus the extra short-lived connections `CouponServiceImpl`/`CouponUsageServiceImpl` open via `REQUIRES_NEW` transactions.
+- The JDBC URL typically needs `?sslmode=require` — most managed Postgres offerings enforce SSL by default.
+- Size `spring.datasource.hikari.maximum-pool-size` against the instance's `max_connections`, accounting for (pool size × pod count) plus the extra short-lived connections `CouponServiceImpl`/`CouponUsageServiceImpl` open via `REQUIRES_NEW` transactions.
 
 ### 5.3. Secrets
 
-Database credentials go into a Kubernetes `Secret` (or Azure Key Vault via the CSI driver / External Secrets Operator), mapped to the `SPRING_DATASOURCE_*` environment variables in the pod spec — never in `application.yml` or committed to git.
+Database credentials go into a Kubernetes `Secret` — either created directly, or synced from a cloud secret manager (Azure Key Vault, AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault) via the Secrets Store CSI driver or the External Secrets Operator, both of which work the same way regardless of provider. Credentials are mapped to the `SPRING_DATASOURCE_*` environment variables in the pod spec — never committed to git or written into `application.yml`.
 
 ### 5.4. Health checks for orchestration
 
 Implements NFR12 (Recommendations), previously unaddressed. Add `spring-boot-starter-actuator` and enable `management.endpoint.health.probes.enabled=true` for separate `/actuator/health/liveness` and `/actuator/health/readiness` endpoints, with readiness tied to real database connectivity. Without this, Kubernetes can't distinguish a broken pod from a healthy one, and can't safely restart or stop routing to a stuck instance.
 
-### 5.5. Kubernetes manifests
+### 5.5. Kubernetes manifests, packaged as a Helm chart
 
-None of these exist yet:
+None of these exist yet. Rather than raw YAML, package them as a **Helm chart**, templating the pieces that differ per environment (image tag, replica count, resource limits, the Secret/ConfigMap reference) via `values.yaml` — one chart, one `values-dev.yaml`/`values-prod.yaml` per environment:
 
 - **Deployment** — multiple replicas, the container image, env vars sourced from the `Secret`, resource requests/limits, liveness/readiness probes pointing at the actuator endpoints above.
 - **Service** (`ClusterIP`) — routes to the pods on port 8080.
 - **Ingress** (if exposed externally) — TLS via cert-manager.
 - **HorizontalPodAutoscaler** (optional) — scales pod count on CPU/memory.
 
-### 5.6. Azure infrastructure (outside this repository)
+Deploying or updating the release then becomes one command: `helm upgrade --install coupon-service ./chart -f values-prod.yaml`.
 
-- Provision Azure Postgres Flexible Server (Terraform/Bicep/CLI).
-- Prefer VNet-integrated private access between AKS and the Flexible Server over public access plus firewall rules.
-- Push the image to Azure Container Registry; attach ACR to AKS (`az aks update --attach-acr`) so pods don't need `imagePullSecrets`.
+### 5.6. Cloud infrastructure, provisioned with Terraform (outside this repository)
+
+The Kubernetes cluster, the managed Postgres instance, the container registry, and the networking between them are infrastructure, not application config — provisioned with **Terraform** rather than manually through a cloud console, so the setup is reviewable and repeatable:
+
+- A Terraform module per environment declaring the managed Postgres instance, its networking (private access into the same VPC/VNet as the cluster is preferable to public access plus firewall rules, regardless of provider), and the container registry.
+- The provider-specific resource types differ (e.g. `azurerm_postgresql_flexible_server` vs. `aws_db_instance` vs. `google_sql_database_instance`), but the shape of the module — instance, network, registry, output the connection details for the Secret in 5.3 — stays the same across clouds.
+- Registry-to-cluster image pull access configured once at the infrastructure level (e.g. attaching a registry to the cluster's identity), so pods don't need per-deployment `imagePullSecrets`.
 
 ### 5.7. CI/CD
 
-None exists yet. Needed for repeatable deployments: build the jar, build and push the image to ACR, then apply the manifests (or a Helm upgrade).
+None exists yet. Needed for repeatable deployments: build the jar, build and push the image to the container registry, then `terraform apply` for any infrastructure change and `helm upgrade` for the application release.
 
 ### 5.8. Recommended, not blocking
 
