@@ -292,7 +292,7 @@ Verifies ADR-4's atomic concurrency mechanism. Real database (Testcontainers), N
 
 #### 4.1.4: Geolocation adapter tests
 
-WireMock, isolated from business logic. Covers: success, timeout → retry per ADR-2's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded ipwho.is fixture (ADR-3). *JUnit 5 + WireMock.*
+MockServer, isolated from business logic. Covers: success, timeout → retry per ADR-2's Spring Retry config, exhausted retries → fail-closed (`GEO_UNAVAILABLE`, NFR5), and response mapping against a recorded ipwho.is fixture (ADR-3). *JUnit 5 + MockServer.*
 
 **Additional approach:** contract testing (Pact) on the same boundary — verifies this service's expectations against the provider's actual response shape via a shared contract, instead of a hand-written fixture.
 
@@ -302,7 +302,7 @@ Two simultaneous identical `POST /coupons` requests with the same code — one g
 
 #### 4.1.6: E2E/smoke layer
 
-Full HTTP round-trip through the running application, single process. `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests for the two golden paths (create then redeem). Not exhaustive variant coverage — that's 4.1.2. *JUnit 5 + Testcontainers + WireMock.*
+Full HTTP round-trip through the running application, single process. `@SpringBootTest(webEnvironment = RANDOM_PORT)` tests for the two golden paths (create then redeem). Not exhaustive variant coverage — that's 4.1.2. *JUnit 5 + Testcontainers + MockServer.*
 
 ### 4.2. Tool-based tests
 
@@ -310,8 +310,8 @@ The same coverage as 4.1, regrouped by which tool/infrastructure runs it — ref
 
 - **JUnit 5 + Mockito** (no external infra) — 4.1.1 Unit tests
 - **JUnit 5 + Testcontainers (Postgres)** — 4.1.2 Integration tests, 4.1.3 Concurrency tests, 4.1.5 Idempotency-under-concurrency test
-- **JUnit 5 + WireMock** — 4.1.4 Geolocation adapter tests
-- **JUnit 5 + Testcontainers + WireMock** — 4.1.6 E2E/smoke layer
+- **JUnit 5 + MockServer** — 4.1.4 Geolocation adapter tests
+- **JUnit 5 + Testcontainers + MockServer** — 4.1.6 E2E/smoke layer
 - **jqwik + PIT** (additional approach, layered onto 4.1.1's existing suite) — property-based and mutation testing
 - **Pact** (additional approach, layered onto 4.1.4's boundary) — contract testing
 
